@@ -1,3 +1,4 @@
 public/vendor/
 data/
 package-lock.json
+dist

@@ -6,13 +6,20 @@
  *   POST /api/preview/:id     store a project for previewing; served at /preview/:id/
  *   POST /api/publish         host a project at /s/:slug/
  *   POST /api/ai              proxy a chat request to the user's AI provider and stream the reply
- *   GET  /api/config          what the client needs to know (currently: the optional built-in model)
+ *   POST /api/models          list the models a provider offers, for the connect dialog
+ *   GET  /api/config          what the client needs to know: built-in model, account settings
+ *
+ *   POST /api/auth/signup | signin | signout, GET /api/me      accounts (see lib/accounts.js)
+ *   GET  /api/projects, GET|PUT|DELETE /api/projects/:id     projects saved to the signed-in account
+ *
+ * Settings come from environment variables; see the README.
  */
 const http = require('node:http');
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { createAccounts } = require('./lib/accounts');
 
 const PORT = +process.env.PORT || 3000;
 const ROOT = path.join(__dirname, 'public');
@@ -20,6 +27,15 @@ const DATA = process.env.DATA_DIR || path.join(__dirname, 'data');
 const SITES = path.join(DATA, 'sites');
 const META = path.join(DATA, 'meta');
 const MAX_BODY = 25 * 1024 * 1024;
+const flag = v => /^(1|true|yes|on)$/i.test(v || '');
+// Accounts are on unless turned off. REQUIRE_ACCOUNT limits the AI proxy and publishing to signed-in users,
+// which is what you want on a public server. ALLOW_SIGNUP=false stops new sign-ups once your own account exists.
+const ACCOUNTS = !/^(0|false|no|off)$/i.test(process.env.ACCOUNTS || '');
+const REQUIRE_ACCOUNT = ACCOUNTS && flag(process.env.REQUIRE_ACCOUNT);
+const ALLOW_SIGNUP = !/^(0|false|no|off)$/i.test(process.env.ALLOW_SIGNUP || '');
+const DESKTOP = flag(process.env.CODEBASE_DESKTOP); // set by the desktop app, which runs this server locally
+const DOWNLOAD_URL = process.env.DESKTOP_DOWNLOAD_URL || 'https://github.com/eltschu/codebase/releases/latest';
+const accounts = createAccounts(DATA);
 
 // Optional built-in model that every visitor can use for free, paid for by whoever runs the site.
 // Turned on only when the owner sets these; the key never reaches the browser.
@@ -35,8 +51,8 @@ const BUILTIN =
       }
     : null;
 const usage = new Map(); // ip -> { hour, n }
-function takeBuiltinQuota(req) {
-  const ip = req.socket.remoteAddress || '?',
+function takeBuiltinQuota(req, account) {
+  const ip = account ? 'account:' + account.id : req.socket.remoteAddress || '?',
     hour = Math.floor(Date.now() / 3600e3);
   let u = usage.get(ip);
   if (!u || u.hour !== hour) {
@@ -170,7 +186,8 @@ function readBody(req) {
     });
     req.on('end', () => {
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve(text.trim() ? JSON.parse(text) : {});
       } catch {
         reject(httpError(400, 'Invalid JSON'));
       }
@@ -219,7 +236,7 @@ function getPreview(id, rel, res) {
 
 // ---------- publishing (kept on disk) ----------
 const hash = t => crypto.createHash('sha256').update(t).digest('hex');
-async function publish(req, res) {
+async function publish(req, res, account) {
   const body = await readBody(req);
   const slug = String(body.slug || '').toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug))
@@ -232,10 +249,21 @@ async function publish(req, res) {
   let token = String(body.token || '');
   const meta = await fsp.readFile(metaFile, 'utf8').then(JSON.parse, () => null);
   if (meta) {
-    if (!token || hash(token) !== meta.hash) throw httpError(403, `The name "${slug}" is taken. Try another one.`);
+    // The site's owner can update it: either the account that published it, or whoever holds its token.
+    const isOwner = (account && meta.owner === account.id) || (token && hash(token) === meta.hash);
+    if (!isOwner) throw httpError(403, `The name "${slug}" is taken. Try another one.`);
+    if (!token || hash(token) !== meta.hash) {
+      token = crypto.randomBytes(24).toString('hex');
+      meta.hash = hash(token);
+    }
+    if (account && !meta.owner) meta.owner = account.id;
+    await fsp.writeFile(metaFile, JSON.stringify(meta));
   } else {
     token = crypto.randomBytes(24).toString('hex');
-    await fsp.writeFile(metaFile, JSON.stringify({ hash: hash(token), created: Date.now() }));
+    await fsp.writeFile(
+      metaFile,
+      JSON.stringify({ hash: hash(token), owner: account ? account.id : undefined, created: Date.now() }),
+    );
   }
   const dir = path.join(SITES, slug);
   await fsp.rm(dir, { recursive: true, force: true });
@@ -256,11 +284,11 @@ async function getSite(slug, rel, res) {
 }
 
 // ---------- AI proxy: forwards to whichever provider the user connected ----------
-async function ai(req, res) {
+async function ai(req, res, account) {
   const b = await readBody(req);
   if (b.builtin) {
     if (!BUILTIN) throw httpError(400, 'This site has no built-in server model.');
-    takeBuiltinQuota(req);
+    takeBuiltinQuota(req, account);
     Object.assign(b, {
       kind: BUILTIN.kind,
       baseUrl: BUILTIN.baseUrl,
@@ -269,14 +297,12 @@ async function ai(req, res) {
       maxTokens: Math.min(+b.maxTokens || 8000, 8000),
     });
   }
-  const base = String(b.baseUrl || '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!/^https?:\/\//.test(base) || !b.model) throw httpError(400, 'Set the AI address and model first.');
+  const base = apiBase(b);
+  if (!b.model) throw httpError(400, 'Set the AI address and model first.');
   let url, headers, payload;
   if (b.kind === 'anthropic') {
     url = base.replace(/\/v1$/, '') + '/v1/messages';
-    headers = { 'x-api-key': b.apiKey || '', 'anthropic-version': '2023-06-01' };
+    headers = anthropicHeaders(b.apiKey);
     payload = {
       model: b.model,
       max_tokens: b.maxTokens || 16000,
@@ -320,6 +346,99 @@ async function ai(req, res) {
   res.end();
 }
 
+const apiBase = b => {
+  const base = String(b.baseUrl || '')
+    .trim()
+    .replace(/\/+$/, '');
+  if (!/^https?:\/\//.test(base)) throw httpError(400, 'Set the AI address first.');
+  return base;
+};
+const anthropicHeaders = key => ({ 'x-api-key': key || '', 'anthropic-version': '2023-06-01' });
+
+// The models a provider offers, so people pick from a list instead of typing an ID.
+async function listModels(req, res) {
+  const b = await readBody(req);
+  const base = apiBase(b);
+  const anthropic = b.kind === 'anthropic';
+  const url = anthropic ? base.replace(/\/v1$/, '') + '/v1/models?limit=100' : base + '/models';
+  const headers = anthropic ? anthropicHeaders(b.apiKey) : b.apiKey ? { authorization: 'Bearer ' + b.apiKey } : {};
+  let up;
+  try {
+    up = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+  } catch (e) {
+    throw httpError(502, `Could not reach ${new URL(url).host}: ${e.cause?.code || e.message}`);
+  }
+  const j = await up.json().catch(() => ({}));
+  if (up.status === 401 || up.status === 403)
+    throw httpError(
+      401,
+      anthropic ? 'Claude did not accept that API key.' : 'The provider did not accept that API key.',
+    );
+  if (!up.ok) throw httpError(502, `AI provider said ${up.status}: ${j.error?.message || j.error || ''}`.trim());
+  const models = (j.data || j.models || [])
+    .map(m => ({ id: String(m.id || m.name || '').replace(/^models\//, ''), name: m.display_name || '' }))
+    .filter(m => m.id);
+  json(res, 200, { models });
+}
+
+// ---------- accounts ----------
+const COOKIE = 'cb_session';
+function sessionToken(req) {
+  const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`).exec(req.headers.cookie || '');
+  return m ? m[1] : null;
+}
+const isHttps = req => req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
+function setSessionCookie(req, res, token) {
+  const parts = [`${COOKIE}=${token || ''}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
+  parts.push(token ? `Max-Age=${accounts.SESSION_DAYS * 86400}` : 'Max-Age=0');
+  if (isHttps(req)) parts.push('Secure');
+  res.setHeader('set-cookie', parts.join('; '));
+}
+const needAccount = account => {
+  if (!account) throw httpError(401, 'Sign in first.');
+  return account;
+};
+
+async function authRoute(action, req, res) {
+  if (!ACCOUNTS) throw httpError(404, 'Accounts are turned off on this server.');
+  const body = await readBody(req);
+  if (action === 'signout') {
+    await accounts.signOut(sessionToken(req));
+    setSessionCookie(req, res, null);
+    return json(res, 200, { ok: true });
+  }
+  if (action === 'signup' && !ALLOW_SIGNUP) throw httpError(403, 'This server is not accepting new accounts.');
+  const r =
+    action === 'signup' ? await accounts.signUp(body) : await accounts.signIn(body, req.socket.remoteAddress || '?');
+  setSessionCookie(req, res, r.token);
+  json(res, 200, { account: r.account });
+}
+
+async function projectsRoute(req, res, account, id) {
+  needAccount(account);
+  if (!id) return json(res, 200, { projects: await accounts.listProjects(account.id) });
+  if (req.method === 'GET') return json(res, 200, await accounts.getProject(account.id, id));
+  if (req.method === 'PUT') return json(res, 200, await accounts.saveProject(account.id, id, await readBody(req)));
+  if (req.method === 'DELETE') {
+    await accounts.deleteProject(account.id, id);
+    return json(res, 200, { ok: true });
+  }
+  throw httpError(405, 'Method not allowed');
+}
+
+// Changes must come from the editor's own page. Previews and published sites run with an opaque origin,
+// so they send "Origin: null" and are refused here.
+function checkOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return;
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  let ok = false;
+  try {
+    ok = new URL(origin).host === host;
+  } catch {}
+  if (!ok) throw httpError(403, 'Cross-site request refused.');
+}
+
 // ---------- static ----------
 async function serveStatic(rel, res) {
   if (!rel) rel = 'index.html';
@@ -330,34 +449,53 @@ async function serveStatic(rel, res) {
   res.end(buf);
 }
 
-http
-  .createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
+  try {
+    let p;
     try {
-      let p;
-      try {
-        p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-      } catch {
-        throw httpError(400, 'Bad URL');
-      }
-      let m;
-      if (req.method === 'POST') {
-        if ((m = /^\/api\/preview\/([\w-]{1,64})$/.exec(p))) return await setPreview(m[1], req, res);
-        if (p === '/api/publish') return await publish(req, res);
-        if (p === '/api/ai') return await ai(req, res);
-        throw httpError(404, 'Not found');
-      }
-      if (req.method !== 'GET' && req.method !== 'HEAD') throw httpError(405, 'Method not allowed');
-      if (p === '/api/config') return json(res, 200, { builtin: BUILTIN && { name: BUILTIN.name } });
-      if ((m = /^\/preview\/([\w-]{1,64})\/(.*)$/.exec(p))) return getPreview(m[1], m[2], res);
-      if ((m = /^\/s\/([^/]+)$/.exec(p))) {
-        res.writeHead(302, { location: `/s/${m[1]}/` });
-        return res.end();
-      }
-      if ((m = /^\/s\/([^/]+)\/(.*)$/.exec(p))) return await getSite(m[1], m[2], res);
-      await serveStatic(p.slice(1), res);
-    } catch (e) {
-      if (res.headersSent) return res.end();
-      json(res, e.status || 500, { error: e.message || 'Server error' });
+      p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    } catch {
+      throw httpError(400, 'Bad URL');
     }
-  })
-  .listen(PORT, () => console.log(`CodeBase running at http://localhost:${PORT}`));
+    let m;
+    const account = ACCOUNTS && p.startsWith('/api/') ? await accounts.fromToken(sessionToken(req)) : null;
+    if ((m = /^\/api\/projects(?:\/([^/]+))?$/.exec(p))) {
+      if (req.method !== 'GET') checkOrigin(req);
+      if (!ACCOUNTS) throw httpError(404, 'Accounts are turned off on this server.');
+      return await projectsRoute(req, res, account, m[1]);
+    }
+    if (req.method === 'POST') {
+      checkOrigin(req);
+      if ((m = /^\/api\/preview\/([\w-]{1,64})$/.exec(p))) return await setPreview(m[1], req, res);
+      if ((m = /^\/api\/auth\/(signup|signin|signout)$/.exec(p))) return await authRoute(m[1], req, res);
+      if (REQUIRE_ACCOUNT && ['/api/publish', '/api/ai', '/api/models'].includes(p)) needAccount(account);
+      if (p === '/api/publish') return await publish(req, res, account);
+      if (p === '/api/ai') return await ai(req, res, account);
+      if (p === '/api/models') return await listModels(req, res);
+      throw httpError(404, 'Not found');
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') throw httpError(405, 'Method not allowed');
+    if (p === '/api/me') return json(res, 200, { account });
+    if (p === '/api/config')
+      return json(res, 200, {
+        builtin: BUILTIN && { name: BUILTIN.name },
+        accounts: ACCOUNTS && { signup: ALLOW_SIGNUP, required: REQUIRE_ACCOUNT },
+        desktop: DESKTOP,
+        download: DESKTOP ? null : DOWNLOAD_URL,
+      });
+    if ((m = /^\/preview\/([\w-]{1,64})\/(.*)$/.exec(p))) return getPreview(m[1], m[2], res);
+    if ((m = /^\/s\/([^/]+)$/.exec(p))) {
+      res.writeHead(302, { location: `/s/${m[1]}/` });
+      return res.end();
+    }
+    if ((m = /^\/s\/([^/]+)\/(.*)$/.exec(p))) return await getSite(m[1], m[2], res);
+    await serveStatic(p.slice(1), res);
+  } catch (e) {
+    if (res.headersSent) return res.end();
+    json(res, e.status || 500, { error: e.message || 'Server error' });
+  }
+});
+
+// `node server.js` starts listening; the desktop app requires this file and starts it itself.
+if (require.main === module) server.listen(PORT, () => console.log(`CodeBase running at http://localhost:${PORT}`));
+module.exports = { server };

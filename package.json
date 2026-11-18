@@ -1,12 +1,22 @@
 {
   "name": "codebase",
-  "version": "0.4.0",
+  "productName": "CodeBase",
+  "version": "0.5.0",
   "private": true,
-  "description": "A browser IDE for building websites, by hand or with AI.",
+  "description": "An editor for building websites by hand or with AI.",
+  "author": "eltschu",
+  "homepage": "https://github.com/eltschu/codebase",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eltschu/codebase.git"
+  },
   "type": "commonjs",
+  "main": "desktop/main.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "desktop": "electron .",
+    "desktop:build": "electron-builder",
     "test": "node --test test/*.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
@@ -15,6 +25,63 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "electron": "45.3.4",
+    "electron-builder": "26.18.0",
     "prettier": "3.3.3"
+  },
+  "build": {
+    "appId": "io.github.eltschu.codebase",
+    "productName": "CodeBase",
+    "artifactName": "CodeBase-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "server.js",
+      "lib/**",
+      "public/**",
+      "desktop/**",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "eltschu",
+      "repo": "codebase",
+      "releaseType": "release"
+    }
   }
 }

@@ -14,6 +14,10 @@ let base, server, upstream, dataDir;
 function startUpstream() {
   return new Promise(resolve => {
     const s = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url.endsWith('/models')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ data: [{ id: 'model-a' }] }));
+      }
       req.resume();
       req.on('end', () => {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -114,7 +118,7 @@ test('rejects unsafe file paths and site names', async () => {
 });
 
 test('reports the built-in model and enforces its hourly limit', async () => {
-  assert.deepEqual(await (await fetch(base + '/api/config')).json(), { builtin: { name: 'Test Free' } });
+  assert.deepEqual((await (await fetch(base + '/api/config')).json()).builtin, { name: 'Test Free' });
 
   const ask = () =>
     post(base + '/api/ai', { builtin: true, system: 'test', messages: [{ role: 'user', content: 'hi' }] });
@@ -134,4 +138,89 @@ test('explains when a connected AI cannot be reached', async () => {
   });
   assert.equal(res.status, 502);
   assert.match((await res.json()).error, /Could not reach/);
+});
+
+test('accounts: sign up, stay signed in, sync projects, sign out', async () => {
+  const signup = await post(base + '/api/auth/signup', { email: 'Ada@Example.com', password: 'correct horse' });
+  assert.equal(signup.status, 200);
+  assert.equal((await signup.json()).account.email, 'ada@example.com');
+  const cookie = signup.headers.get('set-cookie');
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /SameSite=Lax/);
+  const session = cookie.split(';')[0];
+  const as = (url, init = {}) =>
+    fetch(url, { ...init, headers: { 'content-type': 'application/json', cookie: session, ...init.headers } });
+
+  assert.equal((await (await as(base + '/api/me')).json()).account.email, 'ada@example.com');
+  assert.equal(
+    (await post(base + '/api/auth/signup', { email: 'ada@example.com', password: 'another one' })).status,
+    409,
+  );
+
+  const project = { name: 'Site', files: { 'index.html': { content: '<h1>hi</h1>' } }, updated: 1000 };
+  assert.equal((await as(base + '/api/projects/p1', { method: 'PUT', body: JSON.stringify(project) })).status, 200);
+  const list = await (await as(base + '/api/projects')).json();
+  assert.deepEqual(list.projects, [{ id: 'p1', name: 'Site', updated: 1000 }]);
+  assert.equal((await (await as(base + '/api/projects/p1')).json()).files['index.html'].content, '<h1>hi</h1>');
+
+  // Another account can't see it, and signed-out requests are refused.
+  const other = (await post(base + '/api/auth/signup', { email: 'bob@example.com', password: 'password123' })).headers
+    .get('set-cookie')
+    .split(';')[0];
+  assert.equal((await fetch(base + '/api/projects/p1', { headers: { cookie: other } })).status, 404);
+  assert.equal((await fetch(base + '/api/projects')).status, 401);
+
+  assert.equal((await as(base + '/api/projects/p1', { method: 'DELETE' })).status, 200);
+  assert.equal((await as(base + '/api/projects/p1')).status, 404);
+
+  assert.equal((await as(base + '/api/auth/signout', { method: 'POST' })).status, 200);
+  assert.equal((await (await as(base + '/api/me')).json()).account, null);
+});
+
+test('accounts: wrong passwords are refused and throttled', async () => {
+  await post(base + '/api/auth/signup', { email: 'cy@example.com', password: 'longpassword' });
+  assert.equal((await post(base + '/api/auth/signin', { email: 'cy@example.com', password: 'nope' })).status, 401);
+  assert.equal((await post(base + '/api/auth/signup', { email: 'x@y.z', password: 'short' })).status, 400);
+  const ok = await post(base + '/api/auth/signin', { email: 'CY@example.com', password: 'longpassword' });
+  assert.equal(ok.status, 200);
+  for (let i = 0; i < 10; i++) await post(base + '/api/auth/signin', { email: 'cy@example.com', password: 'bad' });
+  assert.equal(
+    (await post(base + '/api/auth/signin', { email: 'cy@example.com', password: 'longpassword' })).status,
+    429,
+  );
+});
+
+test('requests from previews and other sites are refused', async () => {
+  const res = await fetch(base + '/api/publish', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'null' },
+    body: JSON.stringify({ slug: 'from-preview', files: { 'index.html': { content: 'x' } } }),
+  });
+  assert.equal(res.status, 403);
+  const evil = await fetch(base + '/api/auth/signout', { method: 'POST', headers: { origin: 'https://evil.example' } });
+  assert.equal(evil.status, 403);
+});
+
+test('a signed-in owner can update their site without the token', async () => {
+  const session = (await post(base + '/api/auth/signup', { email: 'dee@example.com', password: 'password123' })).headers
+    .get('set-cookie')
+    .split(';')[0];
+  const pub = content =>
+    fetch(base + '/api/publish', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: session },
+      body: JSON.stringify({ slug: 'dee-site', files: { 'index.html': { content } } }),
+    });
+  assert.equal((await pub('one')).status, 200);
+  assert.equal((await pub('two')).status, 200);
+  assert.match(await (await fetch(base + '/s/dee-site/')).text(), /two/);
+});
+
+test('lists the models a provider offers', async () => {
+  const res = await post(base + '/api/models', {
+    kind: 'openai',
+    baseUrl: `http://localhost:${upstream.address().port}/v1`,
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual((await res.json()).models, [{ id: 'model-a', name: '' }]);
 });

@@ -93,6 +93,19 @@
           <path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5Z" />
           <path d="M13.5 3.5v5h5" />
         </symbol>
+        <symbol id="i-user" viewBox="0 0 24 24">
+          <circle cx="12" cy="8.5" r="3.8" />
+          <path d="M4.8 19.5c1.2-3.3 4-5 7.2-5s6 1.7 7.2 5" />
+        </symbol>
+        <symbol id="i-monitor" viewBox="0 0 24 24">
+          <rect x="3.5" y="4.5" width="17" height="11.5" rx="1.8" />
+          <path d="M9 20h6M12 16v4" />
+        </symbol>
+        <symbol id="i-claude" viewBox="0 0 24 24">
+          <path
+            d="M12 3v5.2M12 15.8V21M3 12h5.2M15.8 12H21M5.6 5.6l3.7 3.7M14.7 14.7l3.7 3.7M18.4 5.6l-3.7 3.7M9.3 14.7l-3.7 3.7"
+          />
+        </symbol>
       </defs>
     </svg>
 
@@ -127,6 +140,11 @@
       </button>
       <button id="toggleAI" class="icon-btn" title="Show or hide the AI panel" aria-label="Show or hide the AI panel">
         <svg class="icon"><use href="#i-panel" /></svg>
+      </button>
+      <button id="accountBtn" class="account-btn" title="Account" hidden>
+        <span id="accountAvatar" class="avatar"
+          ><svg class="icon"><use href="#i-user" /></svg></span
+        ><span id="accountLabel">Sign in</span>
       </button>
     </header>
 
@@ -232,19 +250,50 @@
         <label>Model for suggestions<select id="completeSel"></select></label>
         <div class="row"><span class="spacer"></span><button value="close" class="primary">Done</button></div>
       </form>
+      <form method="dialog" id="aiClaudeView" hidden>
+        <h2>Connect Claude</h2>
+        <p class="dim">
+          Paste an API key from the Claude Console. Your key is stored in this browser and only sent to Anthropic.
+        </p>
+        <ol class="steps">
+          <li>
+            <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener"
+              >Open the Claude Console</a
+            >
+            and create an API key.
+          </li>
+          <li>Paste it below, then choose which Claude models to add.</li>
+        </ol>
+        <label
+          >API key<input id="claudeKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"
+        /></label>
+        <div id="claudeModels" class="checks" hidden></div>
+        <div id="claudeOut" class="dim"></div>
+        <p class="dim small">
+          API usage is billed by Anthropic to your Console account. A Claude Pro or Max subscription can't be used to
+          sign in here; Anthropic offers that only in its own apps, such as Claude Code.
+        </p>
+        <div class="row">
+          <button type="button" id="claudeAdvanced">Custom address</button>
+          <span class="spacer"></span>
+          <button type="button" id="claudeBack">Back</button>
+          <button type="button" id="claudeGo" class="primary">Continue</button>
+        </div>
+      </form>
       <form method="dialog" id="aiEditView" hidden>
         <h2 id="aiEditTitle">Connect a model</h2>
         <p class="dim">Your API key is stored in this browser and only sent to your provider.</p>
         <label>Provider<select id="aiPreset"></select></label>
         <label>API URL<input id="aiBase" placeholder="https://" spellcheck="false" /></label>
         <label
+          >API key<input id="aiKey" type="password" placeholder="Not needed for local models" autocomplete="off"
+        /></label>
+        <label
           >Model<input id="aiModel" placeholder="Model ID" spellcheck="false" list="modelSuggest" /><datalist
             id="modelSuggest"
           ></datalist
+          ><span id="aiModelHint" class="dim small"></span
         ></label>
-        <label
-          >API key<input id="aiKey" type="password" placeholder="Not needed for local models" autocomplete="off"
-        /></label>
         <label
           >Name <span class="dim">(optional)</span><input id="aiName" placeholder="Shown in the model picker"
         /></label>
@@ -306,6 +355,47 @@
           ><button value="ok" class="primary" id="askOk">OK</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="accountDlg">
+      <form method="dialog" id="authView">
+        <h2 id="authTitle">Sign in</h2>
+        <p class="dim" id="authIntro">Sign in to keep your projects in your account and open them on any device.</p>
+        <label id="authNameRow" hidden
+          >Name <span class="dim">(optional)</span><input id="authName" autocomplete="name"
+        /></label>
+        <label>Email<input id="authEmail" type="email" autocomplete="email" spellcheck="false" /></label>
+        <label>Password<input id="authPassword" type="password" autocomplete="current-password" /></label>
+        <div id="authError" class="bad"></div>
+        <div class="row">
+          <button type="button" id="authSwitch">Create an account</button>
+          <span class="spacer"></span>
+          <button type="button" id="authCancel">Cancel</button>
+          <button id="authGo" class="primary">Sign in</button>
+        </div>
+      </form>
+      <form method="dialog" id="meView" hidden>
+        <h2>Account</h2>
+        <div class="me">
+          <span id="meAvatar" class="avatar big"></span>
+          <div>
+            <b id="meName"></b>
+            <div id="meEmail" class="dim"></div>
+          </div>
+        </div>
+        <p id="meSync" class="dim"></p>
+        <p class="dim small">
+          AI keys stay in this browser and are not saved to your account. Connect them again on other devices.
+        </p>
+        <div class="row">
+          <button type="button" id="signOut">Sign out</button>
+          <span class="spacer"></span>
+          <button value="close" class="primary">Done</button>
+        </div>
+      </form>
+      <a id="desktopLink" class="desktop-link" target="_blank" rel="noopener" hidden
+        ><svg class="icon"><use href="#i-monitor" /></svg>Get the desktop app for Windows, Mac and Linux</a
+      >
     </dialog>
 
     <div id="toast" role="status" hidden></div>

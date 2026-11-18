@@ -163,6 +163,7 @@
   const save = debounce(() => {
     LS.set('cb.projects', projects);
     LS.set('cb.current', currentId);
+    pushChanges();
   }, 300);
 
   function renderProjects() {
@@ -210,7 +211,9 @@
     if (
       !(await ask({
         title: `Delete "${P().name}"?`,
-        text: 'This removes the project from this browser. Sites you published stay online.',
+        text: account
+          ? 'This removes the project from your account and this browser. Sites you published stay online.'
+          : 'This removes the project from this browser. Sites you published stay online.',
         ok: 'Delete',
         danger: true,
       }))
@@ -677,6 +680,13 @@
 
   // Publishing
   $('#publishBtn').onclick = () => {
+    if (serverCfg.desktop)
+      return ask({
+        title: 'Publishing needs a server',
+        text: 'The desktop app works offline, so there is nowhere to host the site. Use Export to download it as one file, or publish from the website version of CodeBase.',
+        ok: 'OK',
+      });
+    if (serverCfg.accounts?.required && !account) return openAccountDlg('Sign in to publish sites.');
     $('#pubSlug').value =
       P().publish?.slug ||
       P()
@@ -703,6 +713,10 @@
         body: JSON.stringify({ slug, token, files: P().files }),
       });
       const j = await r.json();
+      if (r.status === 401) {
+        $('#publishDlg').close();
+        return openAccountDlg('Sign in to publish sites.');
+      }
       if (!r.ok) throw new Error(j.error);
       P().publish = { slug: j.slug, token: j.token };
       save();
@@ -776,6 +790,7 @@
   const DEVICE_CTX = 8192; // tokens the on-device model can see at once
 
   let serverAI = null; // the site owner's free model, if they set one up
+  let serverCfg = {}; // what /api/config says about this server: accounts, desktop app
   let gpuState = navigator.gpu ? 'checking' : 'none'; // 'checking' | 'ok' | 'none'
   let gpuF16 = false;
   let mcfg = LS.get('cb.models', null);
@@ -953,13 +968,18 @@
       try {
         t = JSON.parse(t).error || t;
       } catch {}
+      if (r.status === 401 && !account && serverCfg.accounts?.required) {
+        openAccountDlg('Sign in to use AI on this server.');
+        t = 'Sign in to use AI on this server.';
+      }
       throw new Error(t);
     }
     const rd = r.body.getReader(),
       dec = new TextDecoder();
     let buf = '',
       full = '',
-      truncated = false;
+      truncated = false,
+      refused = false;
     for (;;) {
       const { value, done } = await rd.read();
       if (done) break;
@@ -984,12 +1004,14 @@
           j.choices?.[0]?.finish_reason === 'length'
         )
           truncated = true;
+        if (j.type === 'message_delta' && j.delta?.stop_reason === 'refusal') refused = true;
         if (t) {
           full += t;
           onText?.(full);
         }
       }
     }
+    if (refused && !full.trim()) throw new Error('Claude declined this request. Try rephrasing it.');
     return { full, truncated };
   }
   function callModel(m, opts) {
@@ -1005,6 +1027,7 @@
   const showView = v => {
     $('#aiListView').hidden = v !== 'list';
     $('#aiEditView').hidden = v !== 'edit';
+    $('#aiClaudeView').hidden = v !== 'claude';
   };
   async function renderModelLists() {
     const chat = chatModel(),
@@ -1021,14 +1044,19 @@
         free += `<div class="mrow" data-dev="${id}"><div><b>${d.name}</b> <span class="dim">· ${d.size}</span><div class="dim">${d.note} Runs on your device, private and offline after a one-time ${d.dl} download. <span class="dl"></span></div></div>${useBtn(id)}</div>`;
       }
     $('#freeList').innerHTML = free;
-    $('#userList').innerHTML = mcfg.list.length
-      ? mcfg.list
-          .map(
-            c => `<div class="mrow"><div><b>${esc(c.name || c.model)}</b><div class="dim">${esc(PRESETS[c.preset]?.label || 'Custom')} · ${esc(c.model)}</div></div>
+    const claudeCard = mcfg.list.some(c => c.kind === 'anthropic')
+      ? ''
+      : `<div class="mrow claude-card"><span class="claude-mark">${icon('claude')}</span><div><b>Claude</b><div class="dim">Anthropic's models for coding, review and building whole sites.</div></div><button type="button" class="primary" data-claude="1">Connect Claude</button></div>`;
+    $('#userList').innerHTML =
+      claudeCard +
+      (mcfg.list.length
+        ? mcfg.list
+            .map(
+              c => `<div class="mrow"><div><b>${esc(c.name || c.model)}</b><div class="dim">${esc(PRESETS[c.preset]?.label || 'Custom')} · ${esc(c.model)}</div></div>
     <span class="btns"><button type="button" data-edit="${c.id}">Edit</button><button type="button" class="icon-btn" data-del="${c.id}" title="Remove" aria-label="Remove">${icon('trash')}</button>${useBtn(c.id)}</span></div>`,
-          )
-          .join('')
-      : '<div class="dim mempty">None yet. Connect Claude, ChatGPT, Gemini, a local model, or anything OpenAI-compatible.</div>';
+            )
+            .join('')
+        : '<div class="dim mempty">Or connect ChatGPT, Gemini, a local model, or anything OpenAI-compatible.</div>');
     const all = allModels();
     $('#completeSel').innerHTML =
       `<option value="same">Same as the chat model</option>` +
@@ -1057,7 +1085,8 @@
   $('#aiDlg').onclick = async e => {
     const t = e.target,
       d = t.dataset;
-    if (d.use) {
+    if (d.claude) openClaude();
+    else if (d.use) {
       mcfg.chat = d.use;
       saveModels();
       renderAiStatus();
@@ -1106,30 +1135,150 @@
     saveModels();
   };
   $('#addModel').onclick = () => openEdit(null);
-  function fillModelSuggestions() {
-    $('#modelSuggest').innerHTML = (PRESETS[$('#aiPreset').value].models || [])
-      .map(m => `<option value="${m}">`)
+  function fillModelSuggestions(list) {
+    $('#modelSuggest').innerHTML = (list || PRESETS[$('#aiPreset').value].models || [])
+      .map(m => `<option value="${esc(m)}">`)
       .join('');
   }
-  function openEdit(c) {
-    editing = c;
+  // Ask the provider which models this key can use, so people pick from a list rather than typing IDs.
+  async function fetchModels(cfg) {
+    const r = await fetch('api/models', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `Could not list models (${r.status})`);
+    return j.models;
+  }
+  let modelsSeq = 0;
+  async function loadEditModels() {
+    const cfg = readAiForm(),
+      hint = $('#aiModelHint'),
+      seq = ++modelsSeq;
+    if (!/^https?:\/\//.test(cfg.baseUrl) || (!cfg.apiKey && !/localhost|127\.0\.0\.1/.test(cfg.baseUrl))) return;
+    hint.textContent = 'Loading available models…';
+    try {
+      const models = await fetchModels(cfg);
+      if (seq !== modelsSeq) return;
+      fillModelSuggestions(models.map(m => m.id));
+      hint.textContent = models.length ? `${models.length} models available. Start typing to pick one.` : '';
+      if (!$('#aiModel').value && models[0]) $('#aiModel').value = models[0].id;
+    } catch (e) {
+      if (seq === modelsSeq) hint.textContent = '';
+    }
+  }
+  $('#aiKey').addEventListener('change', loadEditModels);
+  $('#aiBase').addEventListener('change', loadEditModels);
+  // `prefill` starts a new connection from the given values instead of editing an existing one.
+  function openEdit(c, prefill = false) {
+    editing = prefill ? null : c;
     const v = c || { preset: 'anthropic', ...PRESETS.anthropic, apiKey: '', name: '' };
-    $('#aiEditTitle').textContent = c ? 'Edit model' : 'Connect a model';
+    $('#aiEditTitle').textContent = editing ? 'Edit model' : 'Connect a model';
     $('#aiPreset').value = v.preset;
     $('#aiBase').value = v.baseUrl;
     $('#aiModel').value = v.model;
     $('#aiKey').value = v.apiKey || '';
     $('#aiName').value = v.name || '';
     $('#aiTestOut').textContent = '';
+    $('#aiModelHint').textContent = '';
     fillModelSuggestions();
     showView('edit');
     $('#aiModel').focus();
+    loadEditModels();
   }
   $('#aiPreset').onchange = e => {
     const p = PRESETS[e.target.value];
     $('#aiBase').value = p.baseUrl;
     $('#aiModel').value = p.model;
+    $('#aiModelHint').textContent = '';
     fillModelSuggestions();
+    loadEditModels();
+  };
+
+  // Connect Claude: paste a key, pick models from the ones the key can use. Each becomes an entry in the picker.
+  const CLAUDE_PICKS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+  let claudeFound = null;
+  function openClaude() {
+    claudeFound = null;
+    $('#claudeKey').value = mcfg.list.find(c => c.kind === 'anthropic')?.apiKey || '';
+    $('#claudeModels').hidden = true;
+    $('#claudeModels').innerHTML = '';
+    $('#claudeOut').textContent = '';
+    $('#claudeGo').textContent = 'Continue';
+    showView('claude');
+    $('#claudeKey').focus();
+  }
+  $('#claudeKey').addEventListener('input', () => {
+    if (!claudeFound) return;
+    claudeFound = null;
+    $('#claudeModels').hidden = true;
+    $('#claudeOut').textContent = '';
+    $('#claudeGo').textContent = 'Continue';
+  });
+  $('#claudeBack').onclick = () => {
+    showView('list');
+    renderModelLists();
+  };
+  $('#claudeAdvanced').onclick = () =>
+    openEdit({ preset: 'anthropic', ...PRESETS.anthropic, apiKey: $('#claudeKey').value.trim(), name: '' }, true);
+  $('#claudeGo').onclick = async () => {
+    const key = $('#claudeKey').value.trim(),
+      out = $('#claudeOut');
+    if (!key) {
+      out.className = 'bad';
+      out.textContent = 'Paste your API key first.';
+      return;
+    }
+    const base = { preset: 'anthropic', kind: 'anthropic', baseUrl: PRESETS.anthropic.baseUrl, apiKey: key };
+    if (!claudeFound) {
+      out.className = 'dim';
+      out.textContent = 'Checking your key…';
+      try {
+        claudeFound = await fetchModels(base);
+      } catch (e) {
+        out.className = 'bad';
+        out.textContent = e.message;
+        return;
+      }
+      if (!claudeFound.length) {
+        out.className = 'bad';
+        out.textContent = 'That key works, but it has no models available.';
+        claudeFound = null;
+        return;
+      }
+      const have = new Set(mcfg.list.filter(c => c.kind === 'anthropic').map(c => c.model));
+      const picks = claudeFound.some(m => CLAUDE_PICKS.includes(m.id)) ? CLAUDE_PICKS : [claudeFound[0].id];
+      $('#claudeModels').innerHTML =
+        '<div class="dim">Models to add to the picker</div>' +
+        claudeFound
+          .map(
+            m =>
+              `<label class="chk"><input type="checkbox" value="${esc(m.id)}"${picks.includes(m.id) || have.has(m.id) ? ' checked' : ''}${have.has(m.id) ? ' disabled' : ''}> ${esc(m.name || m.id)} <span class="dim">${esc(m.id)}</span></label>`,
+          )
+          .join('');
+      $('#claudeModels').hidden = false;
+      out.className = 'ok';
+      out.textContent = 'Key accepted.';
+      $('#claudeGo').textContent = 'Connect';
+      return;
+    }
+    const chosen = [...document.querySelectorAll('#claudeModels input:checked:not(:disabled)')].map(i => i.value);
+    const names = Object.fromEntries(claudeFound.map(m => [m.id, m.name]));
+    // A new key replaces the one on existing Claude entries, so there's only ever one to update.
+    for (const c of mcfg.list) if (c.kind === 'anthropic' && c.baseUrl === base.baseUrl) c.apiKey = key;
+    for (const id of chosen) mcfg.list.push({ id: uid(), ...base, model: id, name: names[id] || id });
+    const pick = mcfg.list.find(c => c.model === chosen.find(id => /opus/.test(id)) || c.model === chosen[0]);
+    if (pick) mcfg.chat = pick.id;
+    // Use the smallest model for as-you-type suggestions: they're frequent and short.
+    const fast = mcfg.list.find(c => c.kind === 'anthropic' && /haiku/.test(c.model));
+    if (fast && mcfg.complete === 'same') mcfg.complete = fast.id;
+    saveModels();
+    renderAiStatus();
+    emptyChat();
+    showView('list');
+    renderModelLists();
+    toast(chosen.length ? `Claude connected. ${pick ? `Using ${pick.name}.` : ''}` : 'Claude key updated.');
   };
   const readAiForm = () => ({
     preset: $('#aiPreset').value,
@@ -1692,6 +1841,253 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
     if (!LS.get('cb.ui', null)) applyUI(document.documentElement.dataset.ui);
   });
 
+  // Accounts: projects are kept in the account and synced from every device you sign in on
+  let account = null;
+  // project id -> fingerprint of the version the account has. Kept in the browser so a reload doesn't
+  // re-upload everything (and overwrite newer changes made on another device).
+  const savedSync = LS.get('cb.sync', null);
+  let synced = savedSync?.hashes || {};
+  let syncState = { ok: true, text: '' };
+  const fingerprint = str => {
+    let h1 = 0xdeadbeef,
+      h2 = 0x41c6ce57;
+    for (let i = 0; i < str.length; i++) {
+      const c = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 2654435761);
+      h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36) + ':' + str.length;
+  };
+  const projectData = p => ({ name: p.name, files: p.files, publish: p.publish || null });
+  const snapshot = p => fingerprint(JSON.stringify(projectData(p)));
+  const saveSync = () => LS.set('cb.sync', account ? { account: account.id, hashes: synced } : null);
+  const pristine = id => snapshot(projects[id]) === snapshot(starter(projects[id].name));
+  async function api(url, method = 'GET', body) {
+    const r = await fetch(url, {
+      method,
+      headers: body === undefined ? {} : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.error || `Request failed (${r.status})`), { status: r.status });
+    return j;
+  }
+  function setSync(ok, text) {
+    syncState = { ok, text };
+    $('#accountBtn').classList.toggle('sync-error', !ok);
+    if ($('#accountDlg').open) renderAccountDlg();
+  }
+
+  let pushing = false,
+    pushAgain = false;
+  async function pushChanges() {
+    if (!account) return;
+    if (pushing) return void (pushAgain = true);
+    pushing = true;
+    try {
+      do {
+        pushAgain = false;
+        for (const [id, p] of Object.entries(projects)) {
+          const snap = snapshot(p);
+          if (synced[id] === snap) continue;
+          p.updated = Date.now();
+          await api('api/projects/' + id, 'PUT', { ...projectData(p), updated: p.updated });
+          synced[id] = snap;
+          saveSync();
+        }
+        for (const id of Object.keys(synced))
+          if (!projects[id]) {
+            await api('api/projects/' + id, 'DELETE');
+            delete synced[id];
+            saveSync();
+          }
+      } while (pushAgain);
+      LS.set('cb.projects', projects);
+      setSync(true, 'All changes are saved to your account.');
+    } catch (e) {
+      if (e.status === 401) return signedOut('You were signed out. Sign in again to keep syncing.');
+      setSync(false, "Couldn't save to your account: " + e.message + '. Changes are kept in this browser.');
+    } finally {
+      pushing = false;
+    }
+  }
+
+  // Bring down projects that are newer in the account. Local edits that haven't been uploaded yet always win.
+  async function pullChanges() {
+    if (!account) return;
+    let remote;
+    try {
+      ({ projects: remote } = await api('api/projects'));
+    } catch (e) {
+      if (e.status === 401) return signedOut('You were signed out. Sign in again to keep syncing.');
+      return setSync(false, "Couldn't reach your account: " + e.message);
+    }
+    let changedCurrent = false;
+    const remoteIds = new Set(remote.map(r => r.id));
+    for (const r of remote) {
+      const local = projects[r.id];
+      const unsent = local && synced[r.id] !== snapshot(local);
+      if (local && (unsent || (local.updated || 0) >= r.updated)) continue;
+      const full = await api('api/projects/' + r.id).catch(() => null);
+      if (!full) continue;
+      projects[r.id] = {
+        name: full.name,
+        files: full.files,
+        publish: full.publish || undefined,
+        updated: full.updated,
+      };
+      synced[r.id] = snapshot(projects[r.id]);
+      if (r.id === currentId) changedCurrent = true;
+    }
+    // Deleted on another device.
+    for (const id of Object.keys(synced))
+      if (!remoteIds.has(id) && projects[id] && synced[id] === snapshot(projects[id])) {
+        delete projects[id];
+        delete synced[id];
+        if (id === currentId) changedCurrent = true;
+      }
+    // An untouched starter project would just pile up copies in the account, so drop it.
+    if (remote.length)
+      for (const id of Object.keys(projects))
+        if (!synced[id] && pristine(id)) {
+          delete projects[id];
+          if (id === currentId) changedCurrent = true;
+        }
+    if (!Object.keys(projects).length) projects[uid()] = starter('My first site');
+    if (!projects[currentId]) currentId = Object.keys(projects)[0];
+    LS.set('cb.projects', projects);
+    saveSync();
+    if (changedCurrent) switchProject(currentId);
+    else renderProjects();
+    await pushChanges();
+  }
+
+  function signedIn(a) {
+    if (LS.get('cb.sync', null)?.account !== a.id) synced = {};
+    account = a;
+    saveSync();
+    renderAccountBtn();
+    return pullChanges();
+  }
+  // Signing out removes this account's projects from the browser, so the next person can't open them.
+  async function signedOut(message) {
+    // Keep anything with changes that never reached the account, so nothing is lost.
+    for (const id of Object.keys(synced))
+      if (projects[id] && synced[id] === snapshot(projects[id])) delete projects[id];
+    synced = {};
+    account = null;
+    if (!Object.keys(projects).length) projects[uid()] = starter('My first site');
+    LS.set('cb.projects', projects);
+    saveSync();
+    renderAccountBtn();
+    switchProject(projects[currentId] ? currentId : Object.keys(projects)[0]);
+    if (message) toast(message, 6000);
+  }
+
+  const initials = a => (a.name || a.email).trim()[0].toUpperCase();
+  function renderAccountBtn() {
+    const b = $('#accountBtn');
+    b.hidden = !serverCfg.accounts;
+    $('#accountLabel').textContent = account ? account.name || account.email.split('@')[0] : 'Sign in';
+    $('#accountAvatar').innerHTML = account ? esc(initials(account)) : icon('user');
+    $('#accountAvatar').classList.toggle('filled', !!account);
+    b.title = account ? `Signed in as ${account.email}` : 'Sign in or create an account';
+  }
+
+  let authMode = 'signin';
+  function setAuthMode(m) {
+    authMode = m;
+    const up = m === 'signup';
+    $('#authTitle').textContent = up ? 'Create an account' : 'Sign in';
+    $('#authGo').textContent = up ? 'Create account' : 'Sign in';
+    $('#authSwitch').textContent = up ? 'I have an account' : 'Create an account';
+    $('#authSwitch').hidden = !up && !serverCfg.accounts?.signup;
+    $('#authNameRow').hidden = !up;
+    $('#authPassword').autocomplete = up ? 'new-password' : 'current-password';
+    $('#authPassword').placeholder = up ? 'At least 8 characters' : '';
+    $('#authError').textContent = '';
+  }
+  function renderAccountDlg() {
+    $('#authView').hidden = !!account;
+    $('#meView').hidden = !account;
+    if (account) {
+      $('#meAvatar').textContent = initials(account);
+      $('#meName').textContent = account.name || account.email.split('@')[0];
+      $('#meEmail').textContent = account.email;
+      $('#meSync').textContent = syncState.text || 'Syncing…';
+      $('#meSync').className = syncState.ok ? 'dim' : 'bad';
+    }
+  }
+  function openAccountDlg(reason) {
+    if (!serverCfg.accounts) return;
+    setAuthMode('signin');
+    if (reason) $('#authIntro').textContent = reason;
+    renderAccountDlg();
+    $('#accountDlg').showModal();
+    if (!account) $('#authEmail').focus();
+  }
+  $('#accountBtn').onclick = () => openAccountDlg();
+  $('#authSwitch').onclick = () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+  $('#authCancel').onclick = () => $('#accountDlg').close();
+  $('#accountDlg').addEventListener('close', () => {
+    $('#authIntro').textContent = 'Sign in to keep your projects in your account and open them on any device.';
+    $('#authPassword').value = '';
+  });
+  $('#authView').onsubmit = async e => {
+    e.preventDefault();
+    const go = $('#authGo');
+    go.disabled = true;
+    $('#authError').textContent = '';
+    try {
+      const { account: a } = await api('api/auth/' + authMode, 'POST', {
+        email: $('#authEmail').value,
+        password: $('#authPassword').value,
+        name: $('#authName').value,
+      });
+      setSync(true, 'Syncing your projects…');
+      renderAccountDlg();
+      await signedIn(a);
+      const n = Object.keys(synced).length;
+      toast(
+        authMode === 'signup'
+          ? 'Account created. Your projects are saved to it.'
+          : `Signed in. ${n} project${n === 1 ? '' : 's'} synced.`,
+      );
+      $('#accountDlg').close();
+    } catch (err) {
+      $('#authError').textContent = err.message;
+    } finally {
+      go.disabled = false;
+    }
+  };
+  $('#signOut').onclick = async () => {
+    await pushChanges();
+    if (!syncState.ok) {
+      const sure = await ask({
+        title: 'Sign out anyway?',
+        text: "Some changes haven't reached your account yet and will be lost from this browser.",
+        ok: 'Sign out',
+        danger: true,
+      });
+      if (!sure) return;
+    }
+    await api('api/auth/signout', 'POST', {}).catch(() => {});
+    $('#accountDlg').close();
+    signedOut('Signed out.');
+  };
+  // Pick up changes made on another device when you come back to this tab.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') pullChanges();
+  });
+  window.addEventListener('beforeunload', e => {
+    if (account && (pushing || Object.entries(projects).some(([id, p]) => synced[id] !== snapshot(p)))) {
+      pushChanges();
+      e.preventDefault();
+    }
+  });
+
   // Start
   if (LS.get('cb.noai', false)) document.body.classList.add('no-ai');
   setMode(mode);
@@ -1702,8 +2098,19 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
   Promise.all([
     fetch('api/config')
       .then(r => r.json())
-      .then(c => {
+      .then(async c => {
+        serverCfg = c;
         serverAI = c.builtin || null;
+        if (c.download) {
+          $('#desktopLink').href = c.download;
+          $('#desktopLink').hidden = false;
+        }
+        renderAccountBtn();
+        if (c.accounts) {
+          const { account: a } = await api('api/me');
+          if (a) await signedIn(a);
+          else if (savedSync) signedOut('Your session ended. Sign in again to keep syncing.');
+        }
       })
       .catch(() => {}),
     detectGpu(),

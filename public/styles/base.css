@@ -2,6 +2,9 @@
  * Base layout and components, styled as "Flow" (the default look).
  * Classic and Paper restyle these through the tokens below; see classic.css and paper.css.
  */
+[hidden] {
+  display: none !important;
+}
 :root {
   color-scheme: dark;
   --page: #0b0d18;
@@ -1230,4 +1233,112 @@ button.danger {
 .uicard {
   align-items: stretch;
   justify-content: flex-start;
+}
+
+/* Account button and dialog, Connect Claude */
+.account-btn {
+  padding: 4px 10px 4px 4px;
+  border-radius: 999px;
+  max-width: 180px;
+}
+.account-btn #accountLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--field);
+  color: var(--dim);
+}
+.avatar.filled,
+.avatar.big {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.avatar.big {
+  width: 40px;
+  height: 40px;
+  font-size: 17px;
+}
+.account-btn.sync-error .avatar {
+  box-shadow: 0 0 0 2px var(--err);
+}
+.me {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 14px;
+}
+.small {
+  font-size: 12px;
+}
+.desktop-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--edge-soft);
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+.desktop-link:hover {
+  text-decoration: underline;
+}
+.desktop-link[hidden] {
+  display: none;
+}
+.steps {
+  margin: 0 0 14px;
+  padding-left: 20px;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.steps a {
+  color: var(--accent);
+}
+.checks {
+  display: grid;
+  gap: 2px;
+  max-height: 200px;
+  overflow: auto;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--field);
+}
+.checks .chk {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+.checks .chk .dim {
+  font-size: 11px;
+}
+.claude-card {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.claude-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.claude-mark .icon {
+  width: 18px;
+  height: 18px;
 }
