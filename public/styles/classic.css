@@ -1,0 +1,245 @@
+/* Classic: flat, compact and edge to edge, like a desktop code editor. */
+
+:root[data-ui='classic'] {
+  color-scheme: dark;
+  --page: #1f1f1f;
+  --glass: #181818;
+  --glass-strong: #1f1f1f;
+  --glass-hover: #2a2d2e;
+  --edge: #2b2b2b;
+  --edge-soft: #2b2b2b;
+  --shine: transparent;
+  --shadow: none;
+  --field: #313131;
+  --text: #cccccc;
+  --dim: #9d9d9d;
+  --accent: #0078d4;
+  --accent-ink: #fff;
+  --ok: #89d185;
+  --warn: #cca700;
+  --err: #f48771;
+  --note-bg: rgba(204, 167, 0, 0.12);
+  --err-bg: rgba(244, 135, 113, 0.1);
+  --sel: #264f78;
+  --active: #37373d;
+  --tk-kw: #569cd6;
+  --tk-num: #b5cea8;
+  --tk-def: #dcdcaa;
+  --tk-prop: #9cdcfe;
+  --tk-str: #ce9178;
+  --tk-com: #6a9955;
+  --tk-tag: #569cd6;
+  --tk-attr: #9cdcfe;
+  --tk-op: #d4d4d4;
+}
+:root[data-ui='classic'][data-theme='light'] {
+  color-scheme: light;
+  --page: #f8f8f8;
+  --glass: #f8f8f8;
+  --glass-strong: #ffffff;
+  --glass-hover: #e8e8e8;
+  --edge: #e5e5e5;
+  --edge-soft: #e5e5e5;
+  --field: #ffffff;
+  --text: #3b3b3b;
+  --dim: #6f6f6f;
+  --accent: #005fb8;
+  --ok: #388a34;
+  --warn: #8a6d00;
+  --err: #c72e0f;
+  --note-bg: rgba(255, 200, 0, 0.16);
+  --err-bg: rgba(199, 46, 15, 0.08);
+  --sel: #add6ff;
+  --active: #e4e6f1;
+  --tk-kw: #0000ff;
+  --tk-num: #098658;
+  --tk-def: #795e26;
+  --tk-prop: #001080;
+  --tk-str: #a31515;
+  --tk-com: #008000;
+  --tk-tag: #800000;
+  --tk-attr: #e50000;
+  --tk-op: #3b3b3b;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-ui='classic']:not([data-theme='dark']) {
+    color-scheme: light;
+    --page: #f8f8f8;
+    --glass: #f8f8f8;
+    --glass-strong: #ffffff;
+    --glass-hover: #e8e8e8;
+    --edge: #e5e5e5;
+    --edge-soft: #e5e5e5;
+    --field: #ffffff;
+    --text: #3b3b3b;
+    --dim: #6f6f6f;
+    --accent: #005fb8;
+    --ok: #388a34;
+    --warn: #8a6d00;
+    --err: #c72e0f;
+    --note-bg: rgba(255, 200, 0, 0.16);
+    --err-bg: rgba(199, 46, 15, 0.08);
+    --sel: #add6ff;
+    --active: #e4e6f1;
+    --tk-kw: #0000ff;
+    --tk-num: #098658;
+    --tk-def: #795e26;
+    --tk-prop: #001080;
+    --tk-str: #a31515;
+    --tk-com: #008000;
+    --tk-tag: #800000;
+    --tk-attr: #e50000;
+    --tk-op: #3b3b3b;
+  }
+}
+:root[data-ui='classic'] body {
+  padding: 0;
+  gap: 0;
+}
+:root[data-ui='classic'] body::before {
+  display: none;
+}
+:root[data-ui='classic'] :is(#top, main > *, dialog, #toast) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+:root[data-ui='classic'] #top {
+  height: 40px;
+  border-radius: 0;
+  border: 0;
+  border-bottom: 1px solid var(--edge);
+  background: var(--glass);
+}
+:root[data-ui='classic'] main {
+  gap: 0;
+}
+:root[data-ui='classic'] main > * {
+  border-radius: 0;
+  border: 0;
+  border-right: 1px solid var(--edge);
+}
+:root[data-ui='classic'] #aiPane,
+:root[data-ui='classic'] #filesPane {
+  background: var(--glass);
+}
+:root[data-ui='classic'] #editorPane,
+:root[data-ui='classic'] #previewPane {
+  background: var(--glass-strong);
+}
+:root[data-ui='classic'] .pane-head {
+  min-height: 35px;
+  padding: 4px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+:root[data-ui='classic'] .pane-head button,
+:root[data-ui='classic'] .pane-head select {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+}
+:root[data-ui='classic'] button {
+  border-radius: 4px;
+  box-shadow: none;
+  padding: 3px 10px;
+  background: var(--field);
+  border-color: transparent;
+}
+:root[data-ui='classic'] button:hover {
+  background: var(--glass-hover);
+}
+:root[data-ui='classic'] button:active {
+  transform: none;
+}
+:root[data-ui='classic'] button.primary {
+  background: var(--accent);
+  box-shadow: none;
+}
+:root[data-ui='classic'] :is(select, input, textarea, #prompt) {
+  border-radius: 4px;
+  border-color: var(--edge);
+}
+:root[data-ui='classic'] .seg {
+  border-radius: 4px;
+  padding: 2px;
+}
+:root[data-ui='classic'] .seg button {
+  background: none;
+}
+:root[data-ui='classic'] .seg button.on {
+  background: var(--accent);
+  border-radius: 3px;
+  box-shadow: none;
+}
+:root[data-ui='classic'] #tabs {
+  padding: 0;
+  gap: 0;
+}
+:root[data-ui='classic'] .tab {
+  border-radius: 0;
+  border-right: 1px solid var(--edge);
+}
+:root[data-ui='classic'] .tab.active {
+  background: var(--glass-strong);
+  box-shadow: inset 0 1px 0 var(--accent);
+}
+:root[data-ui='classic'] #tabsRow {
+  background: var(--glass);
+}
+:root[data-ui='classic'] #tree {
+  padding: 4px 0;
+}
+:root[data-ui='classic'] .file {
+  border-radius: 0;
+  padding: 3px 6px 3px 16px;
+}
+:root[data-ui='classic'] .file.active {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+:root[data-ui='classic'] .msg {
+  border-radius: 6px;
+  box-shadow: none;
+}
+:root[data-ui='classic'] .msg.user {
+  background: var(--active);
+}
+:root[data-ui='classic'] :is(.chip, .pill, .mrow, .ai-note, .msg pre, .msg code) {
+  border-radius: 4px;
+}
+:root[data-ui='classic'] dialog {
+  border-radius: 8px;
+  background: var(--glass-strong);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+:root[data-ui='classic'] #toast {
+  border-radius: 6px;
+  background: var(--field);
+}
+:root[data-ui='classic'] .logo {
+  background: none;
+  color: var(--accent);
+}
+:root[data-ui='classic'] .dev-fit {
+  padding: 0;
+}
+:root[data-ui='classic'] .dev-fit #frame {
+  border-radius: 0;
+  box-shadow: none;
+}
+:root[data-ui='classic'] #top button:not(.primary) {
+  background: none;
+}
+:root[data-ui='classic'] #top button:not(.primary):hover {
+  background: var(--glass-hover);
+}
+
+:root[data-ui='classic'] .pane-head .chk {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+}
+:root[data-ui='classic'] .icon-btn {
+  padding: 4px 6px;
+}

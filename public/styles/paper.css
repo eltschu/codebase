@@ -1,0 +1,242 @@
+/* Paper: warm paper, ink outlines and offset shadows. */
+
+:root[data-ui='paper'] {
+  color-scheme: dark;
+  --page: #1c1a17;
+  --glass: #26231f;
+  --glass-strong: #211f1b;
+  --glass-hover: #312d27;
+  --edge: #e9e1d2;
+  --edge-soft: rgba(233, 225, 210, 0.16);
+  --shine: transparent;
+  --shadow: 3px 3px 0 #e9e1d2;
+  --field: #1c1a17;
+  --text: #ede6d8;
+  --dim: #a59a88;
+  --accent: #ff7a50;
+  --accent-ink: #1c1a17;
+  --ok: #7fcf9b;
+  --warn: #f2b94b;
+  --err: #ff8a70;
+  --note-bg: rgba(242, 185, 75, 0.14);
+  --err-bg: rgba(255, 122, 80, 0.12);
+  --sel: rgba(255, 122, 80, 0.25);
+  --active: #3a332a;
+  --tk-kw: #ff8f6b;
+  --tk-num: #c9a0ff;
+  --tk-def: #8fbfff;
+  --tk-prop: #7fd4c8;
+  --tk-str: #b8d98a;
+  --tk-com: #857b6b;
+  --tk-tag: #ff8f6b;
+  --tk-attr: #f2c46b;
+  --tk-op: #cfc6b5;
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+}
+:root[data-ui='paper'][data-theme='light'] {
+  color-scheme: light;
+  --page: #efe8da;
+  --glass: #fbf7ef;
+  --glass-strong: #fffdf8;
+  --glass-hover: #f3ead9;
+  --edge: #2b2620;
+  --edge-soft: rgba(43, 38, 32, 0.16);
+  --shadow: 3px 3px 0 #2b2620;
+  --field: #fffdf8;
+  --text: #2b2620;
+  --dim: #786d5e;
+  --accent: #e4572e;
+  --accent-ink: #fff;
+  --ok: #2f7d4f;
+  --warn: #9a5a00;
+  --err: #c8341b;
+  --note-bg: rgba(240, 180, 60, 0.25);
+  --err-bg: rgba(228, 87, 46, 0.1);
+  --sel: rgba(228, 87, 46, 0.2);
+  --active: #f3e3c9;
+  --tk-kw: #b5361b;
+  --tk-num: #8a4fbf;
+  --tk-def: #1f5fa8;
+  --tk-prop: #1f6f6a;
+  --tk-str: #4d7a1f;
+  --tk-com: #9a8f7e;
+  --tk-tag: #b5361b;
+  --tk-attr: #8a5a00;
+  --tk-op: #6a5f50;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-ui='paper']:not([data-theme='dark']) {
+    color-scheme: light;
+    --page: #efe8da;
+    --glass: #fbf7ef;
+    --glass-strong: #fffdf8;
+    --glass-hover: #f3ead9;
+    --edge: #2b2620;
+    --edge-soft: rgba(43, 38, 32, 0.16);
+    --shadow: 3px 3px 0 #2b2620;
+    --field: #fffdf8;
+    --text: #2b2620;
+    --dim: #786d5e;
+    --accent: #e4572e;
+    --accent-ink: #fff;
+    --ok: #2f7d4f;
+    --warn: #9a5a00;
+    --err: #c8341b;
+    --note-bg: rgba(240, 180, 60, 0.25);
+    --err-bg: rgba(228, 87, 46, 0.1);
+    --sel: rgba(228, 87, 46, 0.2);
+    --active: #f3e3c9;
+    --tk-kw: #b5361b;
+    --tk-num: #8a4fbf;
+    --tk-def: #1f5fa8;
+    --tk-prop: #1f6f6a;
+    --tk-str: #4d7a1f;
+    --tk-com: #9a8f7e;
+    --tk-tag: #b5361b;
+    --tk-attr: #8a5a00;
+    --tk-op: #6a5f50;
+  }
+}
+:root[data-ui='paper'] body {
+  padding: 14px;
+  gap: 14px;
+  background: var(--page) radial-gradient(var(--edge-soft) 0.6px, transparent 0.8px) 0 0/5px 5px;
+}
+:root[data-ui='paper'] body::before {
+  display: none;
+}
+:root[data-ui='paper'] :is(#top, main > *, dialog, #toast) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: 1.5px solid var(--edge);
+  box-shadow: var(--shadow);
+}
+:root[data-ui='paper'] main {
+  gap: 14px;
+}
+:root[data-ui='paper'] main > * {
+  border-radius: 12px;
+  background: var(--glass);
+}
+:root[data-ui='paper'] #editorPane {
+  background: var(--glass-strong);
+}
+:root[data-ui='paper'] #top {
+  border-radius: 12px;
+  background: var(--glass);
+}
+:root[data-ui='paper'] :is(.brand, .pane-head > span:first-child, dialog h2, .empty-chat b) {
+  font-family: var(--serif);
+}
+:root[data-ui='paper'] .brand {
+  font-size: 18px;
+  font-style: italic;
+}
+:root[data-ui='paper'] .pane-head > span:first-child {
+  font-size: 15px;
+}
+:root[data-ui='paper'] .logo {
+  background: none;
+  color: var(--accent);
+  font-style: normal;
+}
+:root[data-ui='paper'] button {
+  border-radius: 8px;
+  border: 1.5px solid var(--edge);
+  background: var(--glass-strong);
+  box-shadow: 2px 2px 0 var(--edge);
+  transition:
+    transform 0.08s,
+    box-shadow 0.08s;
+}
+:root[data-ui='paper'] button:hover {
+  background: var(--glass-hover);
+}
+:root[data-ui='paper'] button:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+:root[data-ui='paper'] button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--edge);
+  box-shadow: 2px 2px 0 var(--edge);
+}
+:root[data-ui='paper'] :is(.file button, .tab button) {
+  border: 0;
+  box-shadow: none;
+  background: none;
+}
+:root[data-ui='paper'] :is(select, input, textarea, #prompt) {
+  border-radius: 8px;
+  border: 1.5px solid var(--edge-soft);
+}
+:root[data-ui='paper'] .seg {
+  border-radius: 9px;
+  border: 1.5px solid var(--edge);
+  background: var(--glass-strong);
+}
+:root[data-ui='paper'] .seg button {
+  border: 0;
+  box-shadow: none;
+  background: none;
+}
+:root[data-ui='paper'] .seg button.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 6px;
+  box-shadow: none;
+}
+:root[data-ui='paper'] .tab {
+  border-radius: 8px 8px 0 0;
+}
+:root[data-ui='paper'] .tab.active {
+  background: var(--glass-hover);
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+:root[data-ui='paper'] .file {
+  border-radius: 6px;
+}
+:root[data-ui='paper'] .file.active {
+  background: var(--active);
+  box-shadow: none;
+}
+:root[data-ui='paper'] .msg {
+  border-radius: 10px;
+  border: 1.5px solid var(--edge-soft);
+  box-shadow: none;
+}
+:root[data-ui='paper'] .msg.user {
+  background: color-mix(in srgb, var(--accent) 15%, var(--glass-strong));
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+:root[data-ui='paper'] :is(.chip, .pill) {
+  border-radius: 6px;
+}
+:root[data-ui='paper'] .mrow {
+  border-radius: 10px;
+  border: 1.5px solid var(--edge-soft);
+}
+:root[data-ui='paper'] dialog {
+  border-radius: 16px;
+  background: var(--glass-strong);
+  box-shadow: 6px 6px 0 var(--edge);
+}
+:root[data-ui='paper'] #toast {
+  border-radius: 10px;
+  background: var(--glass-strong);
+}
+:root[data-ui='paper'] .dot {
+  box-shadow: none;
+}
+:root[data-ui='paper'] .dev-fit #frame {
+  border-radius: 8px;
+  box-shadow: none;
+  outline: 1.5px solid var(--edge-soft);
+}
+:root[data-ui='paper'] .loadbar {
+  border-radius: 4px;
+}
+:root[data-ui='paper'] .loadbar i {
+  background: var(--accent);
+}

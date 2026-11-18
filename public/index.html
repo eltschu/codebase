@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Build websites in the browser, by hand or with AI. Preview on any device, then export or publish."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>CodeBase</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="vendor/codemirror/codemirror.css" />
+    <link rel="stylesheet" href="styles/base.css" />
+    <link rel="stylesheet" href="styles/devices.css" />
+    <link rel="stylesheet" href="styles/classic.css" />
+    <link rel="stylesheet" href="styles/paper.css" />
+    <script>
+      // Apply the saved look before first paint so the page never flashes the wrong theme.
+      (function () {
+        var root = document.documentElement;
+        root.dataset.ui = 'flow';
+        try {
+          var theme = JSON.parse(localStorage.getItem('cb.theme'));
+          var ui = JSON.parse(localStorage.getItem('cb.ui'));
+          if (theme) root.dataset.theme = theme;
+          if (ui === 'classic' || ui === 'flow' || ui === 'paper') root.dataset.ui = ui;
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
+      <defs>
+        <symbol id="i-logo" viewBox="0 0 24 24">
+          <path d="M12 2.8 21 7.6 12 12.4 3 7.6Z" fill="currentColor" />
+          <path
+            d="m3 12 9 4.8 9-4.8M3 16.4l9 4.8 9-4.8"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+        <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" /></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24">
+          <path d="M4 6.5h16M9 6.5V4.5h6v2M6.5 6.5l1 13h9l1-13M10 10.5v6M14 10.5v6" />
+        </symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11" /></symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24">
+          <path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15" />
+        </symbol>
+        <symbol id="i-download" viewBox="0 0 24 24">
+          <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15" />
+        </symbol>
+        <symbol id="i-play" viewBox="0 0 24 24">
+          <path
+            d="M7.5 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L8.7 4.5a.8.8 0 0 0-1.2.7Z"
+            fill="currentColor"
+            stroke="none"
+          />
+        </symbol>
+        <symbol id="i-external" viewBox="0 0 24 24">
+          <path
+            d="M14 4h6v6M20 4l-8.5 8.5M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"
+          />
+        </symbol>
+        <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4.5h4.5" /></symbol>
+        <symbol id="i-sparkle" viewBox="0 0 24 24">
+          <path
+            d="M12 3.5c.5 4.3 2.2 6 6.5 6.5-4.3.5-6 2.2-6.5 6.5-.5-4.3-2.2-6-6.5-6.5 4.3-.5 6-2.2 6.5-6.5ZM18.5 15.5c.2 1.6.9 2.3 2.5 2.5-1.6.2-2.3.9-2.5 2.5-.2-1.6-.9-2.3-2.5-2.5 1.6-.2 2.3-.9 2.5-2.5Z"
+          />
+        </symbol>
+        <symbol id="i-panel" viewBox="0 0 24 24">
+          <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+          <path d="M14.5 4.5v15" />
+        </symbol>
+        <symbol id="i-palette" viewBox="0 0 24 24">
+          <path
+            d="M12 3.5a8.5 8.5 0 0 0 0 17c1 0 1.5-.7 1.5-1.4 0-.5-.2-.8-.5-1.1-.3-.3-.5-.7-.5-1.1 0-.8.7-1.4 1.5-1.4h1.8a4.7 4.7 0 0 0 4.7-4.7C20.5 6.9 16.7 3.5 12 3.5Z"
+          />
+          <circle cx="7.8" cy="11" r="1" fill="currentColor" />
+          <circle cx="10.5" cy="7.5" r="1" fill="currentColor" />
+          <circle cx="15" cy="7.8" r="1" fill="currentColor" />
+        </symbol>
+        <symbol id="i-contrast" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" />
+        </symbol>
+        <symbol id="i-file" viewBox="0 0 24 24">
+          <path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5Z" />
+          <path d="M13.5 3.5v5h5" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <header id="top">
+      <div class="brand">
+        <svg class="logo"><use href="#i-logo" /></svg>CodeBase
+      </div>
+      <select id="projectSel" aria-label="Project"></select>
+      <button id="newProject" class="icon-btn" title="New project" aria-label="New project">
+        <svg class="icon"><use href="#i-plus" /></svg>
+      </button>
+      <button id="renameProject" class="icon-btn" title="Rename project" aria-label="Rename project">
+        <svg class="icon"><use href="#i-pencil" /></svg>
+      </button>
+      <button id="deleteProject" class="icon-btn" title="Delete project" aria-label="Delete project">
+        <svg class="icon"><use href="#i-trash" /></svg>
+      </button>
+      <span class="spacer"></span>
+      <button id="aiSettingsBtn" title="AI models">
+        <span id="aiDot" class="dot"></span><span id="aiLabel">AI models</span>
+      </button>
+      <button id="exportBtn" title="Download the site as a single HTML file">
+        <svg class="icon"><use href="#i-download" /></svg>Export
+      </button>
+      <button id="publishBtn" class="primary" title="Host this project as a website">Publish</button>
+      <span class="divider"></span>
+      <button id="styleBtn" class="icon-btn" title="Workspace style" aria-label="Workspace style">
+        <svg class="icon"><use href="#i-palette" /></svg>
+      </button>
+      <button id="themeBtn" class="icon-btn" title="Light or dark" aria-label="Switch between light and dark">
+        <svg class="icon"><use href="#i-contrast" /></svg>
+      </button>
+      <button id="toggleAI" class="icon-btn" title="Show or hide the AI panel" aria-label="Show or hide the AI panel">
+        <svg class="icon"><use href="#i-panel" /></svg>
+      </button>
+    </header>
+
+    <main>
+      <aside id="filesPane">
+        <div class="pane-head">
+          <span>Files</span>
+          <span>
+            <button id="newFile" class="icon-btn" title="New file" aria-label="New file">
+              <svg class="icon"><use href="#i-plus" /></svg>
+            </button>
+            <button id="uploadBtn" class="icon-btn" title="Upload files" aria-label="Upload files">
+              <svg class="icon"><use href="#i-upload" /></svg>
+            </button>
+          </span>
+        </div>
+        <div id="tree"></div>
+        <input type="file" id="uploadInput" multiple hidden />
+      </aside>
+
+      <section id="editorPane">
+        <div id="tabsRow">
+          <div id="tabs"></div>
+          <button id="inlineBtn" title="Inline suggestions while you type. Tab accepts, Esc dismisses."></button>
+        </div>
+        <div id="notesBar" hidden><span id="notesCount"></span><button id="clearNotes">Clear comments</button></div>
+        <div id="editor"></div>
+        <div id="binaryView" hidden></div>
+        <div id="emptyView" hidden>No file open. Add one from the Files panel, or ask the AI to build something.</div>
+      </section>
+
+      <section id="previewPane">
+        <div class="pane-head toolbar">
+          <div id="deviceBtns" class="seg"></div>
+          <button id="rotateBtn" class="icon-btn" title="Rotate" aria-label="Rotate">
+            <svg class="icon"><use href="#i-rotate" /></svg>
+          </button>
+          <span class="spacer"></span>
+          <select id="pageSel" aria-label="Page to preview"></select>
+          <label class="chk" title="Refresh the preview as you type"
+            ><input type="checkbox" id="autoRun" checked /> Live</label
+          >
+          <button id="runBtn" class="primary" title="Run (Ctrl+S)">
+            <svg class="icon"><use href="#i-play" /></svg>Run
+          </button>
+          <button id="popBtn" class="icon-btn" title="Open in a new tab" aria-label="Open in a new tab">
+            <svg class="icon"><use href="#i-external" /></svg>
+          </button>
+        </div>
+        <div id="stage">
+          <div id="devWrap">
+            <div id="dev" class="dev">
+              <div class="dev-top"><span class="l"></span><span class="c"></span><span class="r"></span></div>
+              <iframe
+                id="frame"
+                title="Preview"
+                sandbox="allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock allow-downloads"
+              ></iframe>
+              <div class="dev-bottom"><span></span></div>
+            </div>
+          </div>
+        </div>
+        <div id="devInfo"></div>
+        <div id="consolePane" class="collapsed">
+          <div class="pane-head" id="consoleHead">
+            <span>Console <span id="consoleCount"></span></span>
+            <span><button id="fixErrors" hidden>Fix with AI</button><button id="clearConsole">Clear</button></span>
+          </div>
+          <div id="consoleLog"></div>
+        </div>
+      </section>
+
+      <section id="aiPane">
+        <div class="pane-head">
+          <span>Assistant</span><button id="clearChat" title="Start a new conversation">New chat</button>
+        </div>
+        <div id="modeBtns" class="seg"></div>
+        <div id="modeHint"></div>
+        <div id="chat"></div>
+        <div id="composer">
+          <textarea id="prompt" rows="3"></textarea>
+          <div class="row">
+            <select id="modelSel" aria-label="Model"></select>
+            <span class="dim kbd">Ctrl+Enter</span>
+            <button id="sendBtn" class="primary">Send</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="aiDlg">
+      <form method="dialog" id="aiListView">
+        <h2>AI models</h2>
+        <p class="dim">
+          Choose a free model or connect your own. You can switch between them from the assistant panel.
+        </p>
+        <h3>Free</h3>
+        <div id="freeList" class="mlist"></div>
+        <h3><span>Your models</span><button type="button" id="addModel">Connect a model</button></h3>
+        <div id="userList" class="mlist"></div>
+        <h3>Inline suggestions</h3>
+        <label class="chk"><input type="checkbox" id="inlineChk" /> Suggest code while I type</label>
+        <label>Model for suggestions<select id="completeSel"></select></label>
+        <div class="row"><span class="spacer"></span><button value="close" class="primary">Done</button></div>
+      </form>
+      <form method="dialog" id="aiEditView" hidden>
+        <h2 id="aiEditTitle">Connect a model</h2>
+        <p class="dim">Your API key is stored in this browser and only sent to your provider.</p>
+        <label>Provider<select id="aiPreset"></select></label>
+        <label>API URL<input id="aiBase" placeholder="https://" spellcheck="false" /></label>
+        <label
+          >Model<input id="aiModel" placeholder="Model ID" spellcheck="false" list="modelSuggest" /><datalist
+            id="modelSuggest"
+          ></datalist
+        ></label>
+        <label
+          >API key<input id="aiKey" type="password" placeholder="Not needed for local models" autocomplete="off"
+        /></label>
+        <label
+          >Name <span class="dim">(optional)</span><input id="aiName" placeholder="Shown in the model picker"
+        /></label>
+        <div id="aiTestOut" class="dim"></div>
+        <div class="row">
+          <button type="button" id="aiTest">Test</button>
+          <span class="spacer"></span>
+          <button type="button" id="aiBack">Back</button>
+          <button type="button" id="aiSave" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="uiDlg">
+      <form method="dialog">
+        <h2>Choose a workspace style</h2>
+        <p class="dim">You can change this later from the toolbar. Each style has a light and a dark version.</p>
+        <div class="uicards">
+          <button type="button" class="uicard" data-ui="classic">
+            <span class="mini mini-classic"><i></i><i></i><i class="code"></i><i class="pv"></i><i></i></span>
+            <b>Classic</b><span class="dim">Flat and compact, with nothing between you and the code.</span>
+          </button>
+          <button type="button" class="uicard" data-ui="flow">
+            <span class="mini mini-flow"><i></i><i></i><i class="code"></i><i class="pv"></i><i></i></span>
+            <b>Flow</b><span class="dim">Frosted glass panels over soft colour.</span>
+          </button>
+          <button type="button" class="uicard" data-ui="paper">
+            <span class="mini mini-paper"><i></i><i></i><i class="code"></i><i class="pv"></i><i></i></span>
+            <b>Paper</b><span class="dim">Warm paper, ink outlines and a red accent.</span>
+          </button>
+        </div>
+        <div class="row">
+          <span class="spacer"></span><button value="ok" class="primary" id="uiGo">Continue</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="publishDlg">
+      <form method="dialog">
+        <h2>Publish</h2>
+        <p class="dim">Your site gets its own address on this server. Publishing again replaces the live version.</p>
+        <label>Site name<input id="pubSlug" placeholder="my-site" spellcheck="false" /></label>
+        <div id="pubOut"></div>
+        <div class="row">
+          <span class="spacer"></span><button value="cancel">Close</button
+          ><button type="button" id="pubGo" class="primary">Publish</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="askDlg">
+      <form method="dialog" id="askForm">
+        <h2 id="askTitle"></h2>
+        <p id="askText" class="dim"></p>
+        <input id="askInput" spellcheck="false" autocomplete="off" />
+        <div id="askError" class="bad"></div>
+        <div class="row">
+          <span class="spacer"></span><button value="cancel" type="button" id="askCancel">Cancel</button
+          ><button value="ok" class="primary" id="askOk">OK</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" role="status" hidden></div>
+    <script src="vendor/codemirror/codemirror.js"></script>
+    <script src="vendor/codemirror/extras.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
