@@ -224,3 +224,102 @@ test('lists the models a provider offers', async () => {
   assert.equal(res.status, 200);
   assert.deepEqual((await res.json()).models, [{ id: 'model-a', name: '' }]);
 });
+
+const signUp = async email =>
+  (await post(base + '/api/auth/signup', { email, password: 'password123' })).headers.get('set-cookie').split(';')[0];
+const authed = (cookie, url, method = 'GET', body) =>
+  fetch(url, {
+    method,
+    headers: { 'content-type': 'application/json', cookie },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+test('visitors from elsewhere cannot point the AI proxy at private addresses', async () => {
+  const remote = { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.9' };
+  for (const baseUrl of [
+    'http://127.0.0.1:1/v1',
+    'http://169.254.169.254/v1',
+    'http://localhost:1/v1',
+    'http://[::1]:1/v1',
+  ]) {
+    const res = await fetch(base + '/api/ai', {
+      method: 'POST',
+      headers: remote,
+      body: JSON.stringify({ kind: 'openai', baseUrl, model: 'm', messages: [] }),
+    });
+    assert.equal(res.status, 400, baseUrl);
+    assert.match((await res.json()).error, /private network/);
+  }
+  const models = await fetch(base + '/api/models', {
+    method: 'POST',
+    headers: remote,
+    body: JSON.stringify({ kind: 'openai', baseUrl: 'http://10.0.0.1/v1' }),
+  });
+  assert.equal(models.status, 400);
+  // The owner's own built-in model is still allowed, wherever it runs.
+  const builtin = await fetch(base + '/api/config');
+  assert.ok((await builtin.json()).builtin);
+});
+
+test('a save based on an outdated version is refused, so devices can keep both', async () => {
+  const c = await signUp('eve@example.com');
+  const url = base + '/api/projects/shared';
+  const v1 = { name: 'S', files: { 'index.html': { content: '1' } }, updated: 100, base: null };
+  assert.equal((await authed(c, url, 'PUT', v1)).status, 200);
+  // Device A saves on top of 100; device B, still on 100, then tries the same.
+  assert.equal((await authed(c, url, 'PUT', { ...v1, updated: 200, base: 100 })).status, 200);
+  const stale = await authed(c, url, 'PUT', { ...v1, updated: 300, base: 100 });
+  assert.equal(stale.status, 409);
+  assert.equal((await (await authed(c, url)).json()).updated, 200);
+  // Creating a project that already exists is a conflict too.
+  assert.equal((await authed(c, url, 'PUT', { ...v1, updated: 400, base: null })).status, 409);
+});
+
+test('changing the password signs out other sessions', async () => {
+  const c1 = await signUp('fay@example.com');
+  const c2 = (await post(base + '/api/auth/signin', { email: 'fay@example.com', password: 'password123' })).headers
+    .get('set-cookie')
+    .split(';')[0];
+  const wrong = await authed(c1, base + '/api/account/password', 'POST', { current: 'nope', password: 'newpassword' });
+  assert.equal(wrong.status, 401);
+  const ok = await authed(c1, base + '/api/account/password', 'POST', {
+    current: 'password123',
+    password: 'newpassword',
+  });
+  assert.equal(ok.status, 200);
+  assert.ok((await (await authed(c1, base + '/api/me')).json()).account, 'this device stays signed in');
+  assert.equal((await (await authed(c2, base + '/api/me')).json()).account, null, 'other devices are signed out');
+  assert.equal(
+    (await post(base + '/api/auth/signin', { email: 'fay@example.com', password: 'newpassword' })).status,
+    200,
+  );
+});
+
+test('accounts list and take down their sites, and deleting an account removes everything', async () => {
+  const c = await signUp('gus@example.com');
+  const pub = slug => authed(c, base + '/api/publish', 'POST', { slug, files: { 'index.html': { content: slug } } });
+  assert.equal((await pub('gus-one')).status, 200);
+  assert.equal((await pub('gus-two')).status, 200);
+  const { sites } = await (await authed(c, base + '/api/sites')).json();
+  assert.deepEqual(sites.map(s => s.slug).sort(), ['gus-one', 'gus-two']);
+
+  const other = await signUp('hal@example.com');
+  assert.equal((await authed(other, base + '/api/sites/gus-one', 'DELETE')).status, 404);
+  assert.equal((await authed(c, base + '/api/sites/gus-one', 'DELETE')).status, 200);
+  assert.equal((await fetch(base + '/s/gus-one/')).status, 404);
+
+  await authed(c, base + '/api/projects/p', 'PUT', { name: 'P', files: { 'index.html': { content: 'x' } } });
+  assert.equal((await authed(c, base + '/api/account/delete', 'POST', { password: 'wrong' })).status, 401);
+  assert.equal((await authed(c, base + '/api/account/delete', 'POST', { password: 'password123' })).status, 200);
+  assert.equal((await fetch(base + '/s/gus-two/')).status, 404, 'their sites are taken down');
+  assert.equal((await (await authed(c, base + '/api/me')).json()).account, null);
+  assert.equal(
+    (await post(base + '/api/auth/signin', { email: 'gus@example.com', password: 'password123' })).status,
+    401,
+  );
+  // The email can be used again.
+  assert.equal(
+    (await post(base + '/api/auth/signup', { email: 'gus@example.com', password: 'password123' })).status,
+    200,
+  );
+});

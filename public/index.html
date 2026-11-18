@@ -93,6 +93,10 @@
           <path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5Z" />
           <path d="M13.5 3.5v5h5" />
         </symbol>
+        <symbol id="i-history" viewBox="0 0 24 24">
+          <path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4.5h4.5M12 8v4.5l3 1.8" />
+        </symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></symbol>
         <symbol id="i-user" viewBox="0 0 24 24">
           <circle cx="12" cy="8.5" r="3.8" />
           <path d="M4.8 19.5c1.2-3.3 4-5 7.2-5s6 1.7 7.2 5" />
@@ -123,13 +127,26 @@
       <button id="deleteProject" class="icon-btn" title="Delete project" aria-label="Delete project">
         <svg class="icon"><use href="#i-trash" /></svg>
       </button>
+      <button id="historyBtn" class="icon-btn" title="Version history" aria-label="Version history">
+        <svg class="icon"><use href="#i-history" /></svg>
+      </button>
       <span class="spacer"></span>
       <button id="aiSettingsBtn" title="AI models">
         <span id="aiDot" class="dot"></span><span id="aiLabel">AI models</span>
       </button>
-      <button id="exportBtn" title="Download the site as a single HTML file">
-        <svg class="icon"><use href="#i-download" /></svg>Export
-      </button>
+      <span class="menu-wrap">
+        <button id="exportBtn" title="Download this project" aria-haspopup="menu" aria-expanded="false">
+          <svg class="icon"><use href="#i-download" /></svg>Export<svg class="icon chev"><use href="#i-chevron" /></svg>
+        </button>
+        <div id="exportMenu" class="menu" role="menu" hidden>
+          <button role="menuitem" data-export="html">
+            <b>Single HTML file</b><span class="dim">Everything inlined into one page you can open or share</span>
+          </button>
+          <button role="menuitem" data-export="zip">
+            <b>ZIP of all files</b><span class="dim">The project's files and folders, as they are</span>
+          </button>
+        </div>
+      </span>
       <button id="publishBtn" class="primary" title="Host this project as a website">Publish</button>
       <span class="divider"></span>
       <button id="styleBtn" class="icon-btn" title="Workspace style" aria-label="Workspace style">
@@ -156,7 +173,7 @@
             <button id="newFile" class="icon-btn" title="New file" aria-label="New file">
               <svg class="icon"><use href="#i-plus" /></svg>
             </button>
-            <button id="uploadBtn" class="icon-btn" title="Upload files" aria-label="Upload files">
+            <button id="uploadBtn" class="icon-btn" title="Upload files or a ZIP" aria-label="Upload files or a ZIP">
               <svg class="icon"><use href="#i-upload" /></svg>
             </button>
           </span>
@@ -344,6 +361,22 @@
       </form>
     </dialog>
 
+    <dialog id="historyDlg">
+      <form method="dialog">
+        <h2>Version history</h2>
+        <p class="dim">
+          Earlier versions of this project, saved in this browser every few minutes while you work and before the AI or
+          an import changes files.
+        </p>
+        <div id="historyList" class="mlist"></div>
+        <div class="row">
+          <button type="button" id="snapshotNow">Save a version now</button>
+          <span class="spacer"></span>
+          <button value="close" class="primary">Done</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="askDlg">
       <form method="dialog" id="askForm">
         <h2 id="askTitle"></h2>
@@ -384,13 +417,35 @@
           </div>
         </div>
         <p id="meSync" class="dim"></p>
+        <h3>Published sites</h3>
+        <div id="mySites" class="mlist"></div>
         <p class="dim small">
           AI keys stay in this browser and are not saved to your account. Connect them again on other devices.
         </p>
         <div class="row">
           <button type="button" id="signOut">Sign out</button>
+          <button type="button" id="changePw">Change password</button>
           <span class="spacer"></span>
           <button value="close" class="primary">Done</button>
+        </div>
+        <button type="button" id="deleteAccount" class="text-btn bad">Delete account</button>
+      </form>
+      <form method="dialog" id="pwView" hidden>
+        <h2>Change password</h2>
+        <p class="dim">You'll stay signed in here. Other devices will be signed out.</p>
+        <label>Current password<input id="pwCurrent" type="password" autocomplete="current-password" /></label>
+        <label
+          >New password<input
+            id="pwNew"
+            type="password"
+            autocomplete="new-password"
+            placeholder="At least 8 characters"
+        /></label>
+        <div id="pwError" class="bad"></div>
+        <div class="row">
+          <span class="spacer"></span>
+          <button type="button" id="pwCancel">Cancel</button>
+          <button id="pwGo" class="primary">Change password</button>
         </div>
       </form>
       <a id="desktopLink" class="desktop-link" target="_blank" rel="noopener" hidden

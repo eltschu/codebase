@@ -1342,3 +1342,86 @@ button.danger {
   width: 18px;
   height: 18px;
 }
+
+.text-btn {
+  display: block;
+  margin: 10px 0 0 auto;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  font-size: 12px;
+}
+.text-btn:hover {
+  background: none;
+  text-decoration: underline;
+}
+#mySites {
+  max-height: 180px;
+  overflow: auto;
+  margin-bottom: 12px;
+}
+#mySites a {
+  color: var(--text);
+  text-decoration: none;
+}
+#mySites a:hover {
+  text-decoration: underline;
+}
+
+/* Export menu. The toolbar is lifted above the panes so menus that open from it aren't covered. */
+#top {
+  position: relative;
+  z-index: 20;
+}
+.menu-wrap {
+  position: relative;
+}
+#exportBtn .chev {
+  width: 14px;
+  height: 14px;
+  margin-left: -2px;
+  opacity: 0.7;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  width: 280px;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid var(--edge);
+  /* The toolbar already blurs what's behind it, and a blur inside a blur shows nothing, so stay near-solid. */
+  background: var(--page);
+  box-shadow: var(--shadow);
+}
+.menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 2px;
+  text-align: left;
+  white-space: normal;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  box-shadow: none;
+}
+.menu button:hover,
+.menu button:focus-visible {
+  background: var(--active);
+}
+.menu .dim {
+  font-size: 12px;
+  font-weight: 400;
+}
+#historyList {
+  max-height: 340px;
+  overflow: auto;
+}

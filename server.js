@@ -10,7 +10,9 @@
  *   GET  /api/config          what the client needs to know: built-in model, account settings
  *
  *   POST /api/auth/signup | signin | signout, GET /api/me      accounts (see lib/accounts.js)
+ *   POST /api/account/password, POST /api/account/delete      change password, delete the account
  *   GET  /api/projects, GET|PUT|DELETE /api/projects/:id     projects saved to the signed-in account
+ *   GET  /api/sites, DELETE /api/sites/:slug                 sites the signed-in account published
  *
  * Settings come from environment variables; see the README.
  */
@@ -19,6 +21,8 @@ const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
 const crypto = require('node:crypto');
+const dns = require('node:dns').promises;
+const net = require('node:net');
 const { createAccounts } = require('./lib/accounts');
 
 const PORT = +process.env.PORT || 3000;
@@ -33,7 +37,8 @@ const flag = v => /^(1|true|yes|on)$/i.test(v || '');
 const ACCOUNTS = !/^(0|false|no|off)$/i.test(process.env.ACCOUNTS || '');
 const REQUIRE_ACCOUNT = ACCOUNTS && flag(process.env.REQUIRE_ACCOUNT);
 const ALLOW_SIGNUP = !/^(0|false|no|off)$/i.test(process.env.ALLOW_SIGNUP || '');
-const DESKTOP = flag(process.env.CODEBASE_DESKTOP); // set by the desktop app, which runs this server locally
+const DESKTOP = flag(process.env.CODEBASE_DESKTOP);
+const ALLOW_PRIVATE_AI = flag(process.env.ALLOW_PRIVATE_AI); // set by the desktop app, which runs this server locally
 const DOWNLOAD_URL = process.env.DESKTOP_DOWNLOAD_URL || 'https://github.com/eltschu/codebase/releases/latest';
 const accounts = createAccounts(DATA);
 
@@ -257,6 +262,7 @@ async function publish(req, res, account) {
       meta.hash = hash(token);
     }
     if (account && !meta.owner) meta.owner = account.id;
+    meta.updated = Date.now();
     await fsp.writeFile(metaFile, JSON.stringify(meta));
   } else {
     token = crypto.randomBytes(24).toString('hex');
@@ -319,14 +325,19 @@ async function ai(req, res, account) {
   res.on('close', () => ctl.abort());
   let up;
   try {
-    up = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify(payload),
-      signal: ctl.signal,
-    });
+    up = await upstream(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify(payload),
+        signal: ctl.signal,
+      },
+      b.builtin ? null : req,
+    );
   } catch (e) {
-    throw httpError(502, `Could not reach ${new URL(url).host}: ${e.cause?.code || e.message}`);
+    if (e.name === 'AbortError') return res.end();
+    throw e;
   }
   if (!up.ok) {
     let text = await up.text();
@@ -346,6 +357,53 @@ async function ai(req, res, account) {
   res.end();
 }
 
+// The AI proxy fetches whatever address the user typed. On a shared server that must not become a way to reach
+// the server's own network (cloud metadata, databases, admin panels), so private addresses are only allowed for
+// people using the server on the same machine, which is how Ollama and LM Studio are normally used.
+function isPrivateIp(ip) {
+  if (net.isIPv6(ip)) {
+    const v = ip.toLowerCase();
+    if (v.startsWith('::ffff:')) return isPrivateIp(v.slice(7));
+    return v === '::1' || v === '::' || /^f[cd]/.test(v) || /^fe[89ab]/.test(v);
+  }
+  const [a, b] = ip.split('.').map(Number);
+  return (
+    a === 10 ||
+    a === 127 ||
+    a === 0 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
+const isLocalRequest = req =>
+  /^(127\.|::1$|::ffff:127\.)/.test(req.socket.remoteAddress || '') && !req.headers['x-forwarded-for'];
+async function checkTarget(url, req) {
+  if (ALLOW_PRIVATE_AI || DESKTOP || isLocalRequest(req)) return;
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+  const addrs = net.isIP(host) ? [host] : (await dns.lookup(host, { all: true }).catch(() => [])).map(a => a.address);
+  if (addrs.some(isPrivateIp))
+    throw httpError(
+      400,
+      "This server can't connect to local or private network addresses. To use a model running on your own computer, such as Ollama or LM Studio, run CodeBase on that computer or use the desktop app.",
+    );
+}
+// `req` is the visitor's request; leave it out for addresses the server owner configured.
+async function upstream(url, init, req) {
+  if (req) await checkTarget(url, req);
+  let r;
+  try {
+    r = await fetch(url, { ...init, redirect: 'manual' });
+  } catch (e) {
+    if (e.name === 'AbortError' || e.name === 'TimeoutError') throw e;
+    throw httpError(502, `Could not reach ${new URL(url).host}: ${e.cause?.code || e.message}`);
+  }
+  if (r.status >= 300 && r.status < 400)
+    throw httpError(502, `${new URL(url).host} redirected the request. Check the API address.`);
+  return r;
+}
+
 const apiBase = b => {
   const base = String(b.baseUrl || '')
     .trim()
@@ -362,12 +420,7 @@ async function listModels(req, res) {
   const anthropic = b.kind === 'anthropic';
   const url = anthropic ? base.replace(/\/v1$/, '') + '/v1/models?limit=100' : base + '/models';
   const headers = anthropic ? anthropicHeaders(b.apiKey) : b.apiKey ? { authorization: 'Bearer ' + b.apiKey } : {};
-  let up;
-  try {
-    up = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
-  } catch (e) {
-    throw httpError(502, `Could not reach ${new URL(url).host}: ${e.cause?.code || e.message}`);
-  }
+  const up = await upstream(url, { headers, signal: AbortSignal.timeout(15000) }, req);
   const j = await up.json().catch(() => ({}));
   if (up.status === 401 || up.status === 403)
     throw httpError(
@@ -412,6 +465,48 @@ async function authRoute(action, req, res) {
     action === 'signup' ? await accounts.signUp(body) : await accounts.signIn(body, req.socket.remoteAddress || '?');
   setSessionCookie(req, res, r.token);
   json(res, 200, { account: r.account });
+}
+
+// Sites published while signed in, newest first.
+async function mySites(account) {
+  const names = await fsp.readdir(META).catch(() => []);
+  const out = [];
+  for (const n of names) {
+    const meta = await fsp
+      .readFile(path.join(META, n), 'utf8')
+      .then(JSON.parse)
+      .catch(() => null);
+    if (meta && meta.owner === account.id)
+      out.push({ slug: n.replace(/\.json$/, ''), updated: meta.updated || meta.created });
+  }
+  return out.sort((a, b) => b.updated - a.updated);
+}
+async function takeDown(slug) {
+  await fsp.rm(path.join(SITES, slug), { recursive: true, force: true });
+  await fsp.rm(path.join(META, slug + '.json'), { force: true });
+}
+async function sitesRoute(req, res, account, slug) {
+  needAccount(account);
+  if (!slug) return json(res, 200, { sites: await mySites(account) });
+  if (req.method !== 'DELETE') throw httpError(405, 'Method not allowed');
+  if (!(await mySites(account)).some(s => s.slug === slug)) throw httpError(404, 'You have no site with that name.');
+  await takeDown(slug);
+  json(res, 200, { ok: true });
+}
+
+async function accountRoute(action, req, res, account) {
+  needAccount(account);
+  const body = await readBody(req);
+  if (action === 'password') {
+    await accounts.changePassword(account.id, body, sessionToken(req));
+    return json(res, 200, { ok: true });
+  }
+  // Deleting the account also takes down the sites it published, so nothing is left without an owner.
+  const sites = await mySites(account);
+  await accounts.deleteAccount(account.id, body);
+  for (const s of sites) await takeDown(s.slug);
+  setSessionCookie(req, res, null);
+  json(res, 200, { ok: true });
 }
 
 async function projectsRoute(req, res, account, id) {
@@ -464,10 +559,17 @@ const server = http.createServer(async (req, res) => {
       if (!ACCOUNTS) throw httpError(404, 'Accounts are turned off on this server.');
       return await projectsRoute(req, res, account, m[1]);
     }
+    if ((m = /^\/api\/sites(?:\/([a-z0-9-]{1,41}))?$/.exec(p))) {
+      if (req.method !== 'GET') checkOrigin(req);
+      if (!ACCOUNTS) throw httpError(404, 'Accounts are turned off on this server.');
+      return await sitesRoute(req, res, account, m[1]);
+    }
     if (req.method === 'POST') {
       checkOrigin(req);
       if ((m = /^\/api\/preview\/([\w-]{1,64})$/.exec(p))) return await setPreview(m[1], req, res);
       if ((m = /^\/api\/auth\/(signup|signin|signout)$/.exec(p))) return await authRoute(m[1], req, res);
+      if ((m = /^\/api\/account\/(password|delete)$/.exec(p)) && ACCOUNTS)
+        return await accountRoute(m[1], req, res, account);
       if (REQUIRE_ACCOUNT && ['/api/publish', '/api/ai', '/api/models'].includes(p)) needAccount(account);
       if (p === '/api/publish') return await publish(req, res, account);
       if (p === '/api/ai') return await ai(req, res, account);

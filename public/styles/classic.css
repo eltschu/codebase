@@ -243,3 +243,11 @@
 :root[data-ui='classic'] .icon-btn {
   padding: 4px 6px;
 }
+
+:root[data-ui='classic'] .menu {
+  border-radius: 6px;
+  padding: 4px;
+}
+:root[data-ui='classic'] .menu button {
+  border-radius: 4px;
+}

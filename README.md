@@ -19,6 +19,7 @@ Open http://localhost:3000. Projects are saved in the browser, and in your accou
 | `ACCOUNTS`             | on                   | Set to `false` to turn accounts off                                           |
 | `REQUIRE_ACCOUNT`      | off                  | Only signed-in users can use the AI proxy and publish. Use on a public server |
 | `ALLOW_SIGNUP`         | on                   | Set to `false` to stop new sign-ups, e.g. once your own account exists        |
+| `ALLOW_PRIVATE_AI`     | off                  | Let remote visitors point the AI proxy at private network addresses           |
 | `DESKTOP_DOWNLOAD_URL` | this repo's releases | Where the "Get the desktop app" link points                                   |
 
 ## Features
@@ -31,9 +32,10 @@ Open http://localhost:3000. Projects are saved in the browser, and in your accou
   - **Review** leaves comments on specific lines without changing code.
   - **Ask** answers questions about the project.
 - **Inline suggestions:** completions appear as you type. Press Tab to accept or Esc to dismiss.
-- **Export:** download the site as one self-contained HTML file with styles, scripts and images inlined.
+- **Export:** download the site as one self-contained HTML file with styles, scripts and images inlined, or as a ZIP of all its files. Upload a ZIP to import a whole site.
+- **Version history:** earlier versions of each project are saved in the browser every few minutes and before the AI, an import or a restore changes files. Restore any of them from the clock button.
 - **Publish:** host the project at `/s/<name>/` on the same server.
-- **Accounts:** sign up with an email and password to keep projects in your account and open them on any device. Changes sync automatically. Sites published while signed in belong to your account.
+- **Accounts:** sign up with an email and password to keep projects in your account and open them on any device. Changes sync automatically; if the same project is changed on two devices at once, both versions are kept. Sites published while signed in belong to your account, and are listed in the account window where you can take them down. You can change your password (which signs out other devices) or delete the account.
 - **Desktop app:** the whole editor as an app for Windows, Mac and Linux. It works offline, or can connect to a CodeBase server to use your account and publish.
 - **Styles:** Classic, Flow and Paper, each with a light and a dark version.
 
@@ -99,7 +101,8 @@ Any host that runs Node works. On [Render](https://render.com): create a **Web S
 - Device frames match screen size and user agent, but pages render in your own browser's engine, not real iOS, Android or Windows.
 - Previews and published sites run in a sandbox so they can't read the editor's data. `localStorage` inside them is in-memory and resets on reload.
 - Projects are static sites. There is no server-side code or build step.
-- `/api/ai` forwards requests to any URL the client provides. On a public server, set `REQUIRE_ACCOUNT=true` and consider `ALLOW_SIGNUP=false`.
+- `/api/ai` forwards requests to the AI address the user enters. Private and local network addresses are refused unless the request comes from the server's own machine, so a hosted server can't be used to reach its internal network. On a public server, also set `REQUIRE_ACCOUNT=true` and consider `ALLOW_SIGNUP=false`.
+- Version history is kept in each browser and isn't synced to your account.
 - Accounts use email and password only. There is no password reset or email verification yet.
 - Data is stored as JSON files, which suits one server and a modest number of users, not a large service.
 

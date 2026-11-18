@@ -68,7 +68,7 @@
     toastTimer = setTimeout(() => (t.hidden = true), ms);
   }
   // In-app replacement for prompt() and confirm(). Resolves to the entered text, true, or null if cancelled.
-  function ask({ title, text = '', value, placeholder = '', ok = 'OK', danger = false, validate }) {
+  function ask({ title, text = '', value, placeholder = '', ok = 'OK', danger = false, validate, type = 'text' }) {
     const dlg = $('#askDlg'),
       form = $('#askForm'),
       input = $('#askInput'),
@@ -78,6 +78,7 @@
     $('#askText').textContent = text;
     $('#askText').hidden = !text;
     input.hidden = value === undefined;
+    input.type = type;
     input.value = value ?? '';
     input.placeholder = placeholder;
     err.textContent = '';
@@ -190,6 +191,7 @@
     renderPages();
     save();
     runPreview();
+    saveVersion('Opened', id);
   }
   $('#projectSel').onchange = e => switchProject(e.target.value);
   $('#newProject').onclick = async () => {
@@ -219,6 +221,7 @@
       }))
     )
       return;
+    deleteVersions(currentId);
     delete projects[currentId];
     if (!Object.keys(projects).length) projects[uid()] = starter('My first site');
     switchProject(Object.keys(projects)[0]);
@@ -319,6 +322,7 @@
       f.content = cm.getValue();
       save();
       autoPreview();
+      autoVersion();
     }
   });
 
@@ -386,6 +390,10 @@
   $('#uploadBtn').onclick = () => $('#uploadInput').click();
   $('#uploadInput').onchange = async e => {
     for (const file of e.target.files) {
+      if (/\.zip$/i.test(file.name)) {
+        await importZip(file);
+        continue;
+      }
       const name = file.name.replace(/[^\w.\- ]/g, '_');
       if (file.size > 4e6) {
         toast(`${name} is larger than 4 MB and was skipped.`);
@@ -659,22 +667,339 @@
     });
     return { html: '<!DOCTYPE html>\n' + doc.documentElement.outerHTML + '\n', warn: [...warn] };
   }
-  $('#exportBtn').onclick = () => {
+  const exportMenu = $('#exportMenu');
+  const setExportMenu = open => {
+    exportMenu.hidden = !open;
+    $('#exportBtn').setAttribute('aria-expanded', String(open));
+    if (open) exportMenu.querySelector('button').focus();
+  };
+  $('#exportBtn').onclick = e => {
+    e.stopPropagation();
+    setExportMenu(exportMenu.hidden);
+  };
+  document.addEventListener('click', e => {
+    if (!exportMenu.hidden && !exportMenu.contains(e.target)) setExportMenu(false);
+  });
+  exportMenu.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      setExportMenu(false);
+      $('#exportBtn').focus();
+    }
+  });
+  exportMenu.onclick = e => {
+    const kind = e.target.closest('[data-export]')?.dataset.export;
+    if (!kind) return;
+    setExportMenu(false);
+    if (kind === 'zip') exportZip();
+    else exportHtml();
+  };
+  const fileBase = () =>
+    P()
+      .name.replace(/[^\w\- ]+/g, '')
+      .trim()
+      .replace(/\s+/g, '-') || 'site';
+  function download(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  function exportHtml() {
     const entry = $('#pageSel').value;
     if (!entry) return toast('Add an .html page first.');
     const { html, warn } = bundle(entry);
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-    a.download =
-      (P()
-        .name.replace(/[^\w\- ]+/g, '')
-        .trim()
-        .replace(/\s+/g, '-') || 'site') + '.html';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    const name = fileBase() + '.html';
+    download(new Blob([html], { type: 'text/html' }), name);
     toast(
-      warn.length ? 'Downloaded. Note: ' + warn[0] : `Downloaded ${a.download} (${Math.ceil(html.length / 1024)} KB).`,
+      warn.length ? 'Downloaded. Note: ' + warn[0] : `Downloaded ${name} (${Math.ceil(html.length / 1024)} KB).`,
       warn.length ? 9000 : 4000,
+    );
+  }
+
+  // ZIP files, written and read with the browser's built-in compression (no library)
+  const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = bytes => {
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const viaStream = async (bytes, stream) =>
+    new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+  const fileBytes = f =>
+    f.b64 ? Uint8Array.from(atob(f.content), c => c.charCodeAt(0)) : new TextEncoder().encode(f.content);
+
+  async function makeZip(files) {
+    const parts = [],
+      central = [];
+    let offset = 0;
+    const now = new Date();
+    const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+    const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+    for (const [path, f] of Object.entries(files)) {
+      const name = new TextEncoder().encode(path),
+        raw = fileBytes(f);
+      let data = raw,
+        method = 0;
+      if (typeof CompressionStream === 'function' && raw.length > 64) {
+        const packed = await viaStream(raw, new CompressionStream('deflate-raw'));
+        if (packed.length < raw.length) [data, method] = [packed, 8];
+      }
+      const crc = crc32(raw);
+      const header = (sig, extra) => {
+        const h = new DataView(new ArrayBuffer(extra ? 46 : 30));
+        let i = 0;
+        const u32 = v => (h.setUint32(i, v, true), (i += 4));
+        const u16 = v => (h.setUint16(i, v, true), (i += 2));
+        u32(sig);
+        if (extra) u16(20);
+        u16(20);
+        u16(0x0800); // names are UTF-8
+        u16(method);
+        u16(dosTime);
+        u16(dosDate);
+        u32(crc);
+        u32(data.length);
+        u32(raw.length);
+        u16(name.length);
+        u16(0);
+        if (extra) {
+          u16(0);
+          u16(0);
+          u16(0);
+          u32(0);
+          u32(offset);
+        }
+        return new Uint8Array(h.buffer);
+      };
+      const local = header(0x04034b50, false);
+      parts.push(local, name, data);
+      central.push(header(0x02014b50, true), name);
+      offset += local.length + name.length + data.length;
+    }
+    const size = central.reduce((n, b) => n + b.length, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true);
+    end.setUint16(8, Object.keys(files).length, true);
+    end.setUint16(10, Object.keys(files).length, true);
+    end.setUint32(12, size, true);
+    end.setUint32(16, offset, true);
+    return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+  }
+
+  async function readZip(buf) {
+    const bytes = new Uint8Array(buf),
+      view = new DataView(buf);
+    let end = -1;
+    for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--)
+      if (view.getUint32(i, true) === 0x06054b50) {
+        end = i;
+        break;
+      }
+    if (end < 0) throw new Error("That file isn't a ZIP, or it's damaged.");
+    const count = view.getUint16(end + 10, true);
+    let p = view.getUint32(end + 16, true);
+    const out = [];
+    for (let n = 0; n < count; n++) {
+      if (view.getUint32(p, true) !== 0x02014b50) throw new Error('This ZIP file is damaged.');
+      const method = view.getUint16(p + 10, true),
+        size = view.getUint32(p + 20, true),
+        nameLen = view.getUint16(p + 28, true),
+        extraLen = view.getUint16(p + 30, true),
+        commentLen = view.getUint16(p + 32, true),
+        localAt = view.getUint32(p + 42, true);
+      const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLen));
+      p += 46 + nameLen + extraLen + commentLen;
+      if (name.endsWith('/')) continue;
+      const start = localAt + 30 + view.getUint16(localAt + 26, true) + view.getUint16(localAt + 28, true);
+      const data = bytes.subarray(start, start + size);
+      if (method !== 0 && method !== 8) throw new Error(`${name} uses a compression this app can't read.`);
+      out.push({ name, data: method === 8 ? await viaStream(data, new DecompressionStream('deflate-raw')) : data });
+    }
+    return out;
+  }
+
+  async function exportZip() {
+    const name = fileBase() + '.zip';
+    const blob = await makeZip(P().files);
+    download(blob, name);
+    toast(`Downloaded ${name} (${Math.ceil(blob.size / 1024)} KB).`);
+  }
+
+  async function importZip(file) {
+    let entries;
+    try {
+      entries = await readZip(await file.arrayBuffer());
+    } catch (e) {
+      return toast(e.message, 6000);
+    }
+    entries = entries.filter(e => !/(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db)(\/|$)/.test(e.name));
+    // A ZIP of a folder puts everything under that folder's name; drop it so index.html ends up at the top.
+    const first = entries[0]?.name.split('/')[0];
+    if (first && entries.every(e => e.name.startsWith(first + '/')))
+      entries.forEach(e => (e.name = e.name.slice(first.length + 1)));
+    const skipped = [];
+    const incoming = {};
+    for (const e of entries) {
+      const path = e.name.replace(/[^\w.\-/ ]/g, '_');
+      if (!validPath(path) || e.data.length > 4e6) {
+        skipped.push(e.name);
+        continue;
+      }
+      if (TEXT_EXT.has(ext(path))) incoming[path] = { content: new TextDecoder().decode(e.data) };
+      else {
+        let bin = '';
+        for (let i = 0; i < e.data.length; i += 0x8000) bin += String.fromCharCode(...e.data.subarray(i, i + 0x8000));
+        incoming[path] = { content: btoa(bin), b64: true };
+      }
+    }
+    const n = Object.keys(incoming).length;
+    if (!n) return toast('There were no files in that ZIP that can be used here.');
+    const replaced = Object.keys(incoming).filter(p => P().files[p]).length;
+    if (
+      replaced &&
+      !(await ask({
+        title: `Import ${n} file${n === 1 ? '' : 's'}?`,
+        text: `${replaced} file${replaced === 1 ? '' : 's'} with the same name will be replaced. The current version is saved in Version history first.`,
+        ok: 'Import',
+      }))
+    )
+      return;
+    await saveVersion('Before importing ' + file.name);
+    for (const [p, f] of Object.entries(incoming)) {
+      P().files[p] = f;
+      delete docs[p];
+    }
+    syncAll();
+    runPreview();
+    toast(
+      `Imported ${n} file${n === 1 ? '' : 's'} from ${file.name}.` +
+        (skipped.length ? ` Skipped ${skipped.length} (too large or unusable name).` : ''),
+      6000,
+    );
+  }
+
+  // Version history: copies of a project kept in this browser's IndexedDB, which has far more room than
+  // localStorage. A version is saved every few minutes while you edit, and before anything replaces files.
+  const MAX_VERSIONS = 50;
+  let historyDb = null;
+  function openHistory() {
+    if (!historyDb)
+      historyDb = new Promise((resolve, reject) => {
+        const r = indexedDB.open('codebase-history', 1);
+        r.onupgradeneeded = () =>
+          r.result.createObjectStore('versions', { keyPath: 'key', autoIncrement: true }).createIndex('pid', 'pid');
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+    return historyDb;
+  }
+  const idb = req =>
+    new Promise(
+      (resolve, reject) => ((req.onsuccess = () => resolve(req.result)), (req.onerror = () => reject(req.error))),
+    );
+  async function listVersions(pid) {
+    const db = await openHistory();
+    const all = await idb(db.transaction('versions').objectStore('versions').index('pid').getAll(pid));
+    return all.sort((a, b) => b.t - a.t);
+  }
+  async function saveVersion(reason, pid = currentId) {
+    const p = projects[pid];
+    if (!p) return;
+    // Copy now: callers change the files right after calling this.
+    const files = structuredClone(p.files);
+    const hash = fingerprint(JSON.stringify(files));
+    try {
+      const db = await openHistory();
+      const latest = (await listVersions(pid))[0];
+      if (latest?.hash === hash) {
+        // Nothing changed since the last version. If this is a "Before …" point, label that version with it,
+        // so it's easy to find the state from just before an import, a restore or AI changes.
+        if (/^Before/.test(reason) && latest.reason !== reason)
+          await idb(
+            db
+              .transaction('versions', 'readwrite')
+              .objectStore('versions')
+              .put({ ...latest, reason }),
+          );
+        return;
+      }
+      await idb(
+        db
+          .transaction('versions', 'readwrite')
+          .objectStore('versions')
+          .add({ pid, t: Date.now(), reason, hash, name: p.name, files }),
+      );
+      const old = (await listVersions(pid)).slice(MAX_VERSIONS);
+      if (old.length) {
+        const store = db.transaction('versions', 'readwrite').objectStore('versions');
+        for (const v of old) store.delete(v.key);
+      }
+    } catch {
+      // History is a safety net; never let it get in the way of editing.
+    }
+  }
+  async function deleteVersions(pid) {
+    try {
+      const db = await openHistory();
+      const keys = (await listVersions(pid)).map(v => v.key);
+      const store = db.transaction('versions', 'readwrite').objectStore('versions');
+      for (const k of keys) store.delete(k);
+    } catch {}
+  }
+  // Save a version at most every 5 minutes of editing.
+  let lastAutoVersion = 0;
+  const autoVersion = () => {
+    if (Date.now() - lastAutoVersion < 5 * 60e3) return;
+    lastAutoVersion = Date.now();
+    saveVersion('While editing');
+  };
+  async function renderHistory() {
+    const box = $('#historyList');
+    let versions = [];
+    try {
+      versions = await listVersions(currentId);
+    } catch {
+      box.innerHTML = '<div class="bad mempty">Version history is not available in this browser.</div>';
+      return;
+    }
+    const now = fingerprint(JSON.stringify(P().files));
+    box.innerHTML = versions.length
+      ? versions
+          .map(v => {
+            const n = Object.keys(v.files).length;
+            const current = v.hash === now;
+            return `<div class="mrow"><div><b>${esc(new Date(v.t).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</b><div class="dim">${esc(v.reason)} · ${n} file${n === 1 ? '' : 's'}</div></div>${current ? '<span class="pill on">Current</span>' : `<button type="button" data-restore="${v.key}">Restore</button>`}</div>`;
+          })
+          .join('')
+      : '<div class="dim mempty">No earlier versions yet. One is saved every few minutes while you edit.</div>';
+  }
+  $('#historyBtn').onclick = () => {
+    $('#historyDlg').showModal();
+    renderHistory();
+  };
+  $('#snapshotNow').onclick = async () => {
+    await saveVersion('Saved by you');
+    renderHistory();
+  };
+  $('#historyList').onclick = async e => {
+    const key = +e.target.dataset.restore;
+    if (!key) return;
+    const v = (await listVersions(currentId)).find(x => x.key === key);
+    if (!v) return;
+    await saveVersion('Before restoring an earlier version');
+    P().files = structuredClone(v.files);
+    docs = {};
+    openTabs = openTabs.filter(p => P().files[p]);
+    syncAll();
+    runPreview();
+    renderHistory();
+    toast(
+      `Restored the version from ${new Date(v.t).toLocaleString([], { timeStyle: 'short', dateStyle: 'medium' })}.`,
     );
   };
 
@@ -1718,6 +2043,7 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
       files = P().files;
     ops = ops.filter(o => !o.del || files[o.path]);
     if (!ops.length) return;
+    saveVersion('Before AI changes');
     for (const o of ops) {
       if (o.del) delete files[o.path];
       else files[o.path] = { content: o.content };
@@ -1847,6 +2173,9 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
   // re-upload everything (and overwrite newer changes made on another device).
   const savedSync = LS.get('cb.sync', null);
   let synced = savedSync?.hashes || {};
+  // project id -> the account's version number (its `updated` time) this device last saw. Sent with each save
+  // so the server can refuse to overwrite changes made on another device in the meantime.
+  let bases = savedSync?.bases || {};
   let syncState = { ok: true, text: '' };
   const fingerprint = str => {
     let h1 = 0xdeadbeef,
@@ -1862,7 +2191,7 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
   };
   const projectData = p => ({ name: p.name, files: p.files, publish: p.publish || null });
   const snapshot = p => fingerprint(JSON.stringify(projectData(p)));
-  const saveSync = () => LS.set('cb.sync', account ? { account: account.id, hashes: synced } : null);
+  const saveSync = () => LS.set('cb.sync', account ? { account: account.id, hashes: synced, bases } : null);
   const pristine = id => snapshot(projects[id]) === snapshot(starter(projects[id].name));
   async function api(url, method = 'GET', body) {
     const r = await fetch(url, {
@@ -1892,8 +2221,17 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
         for (const [id, p] of Object.entries(projects)) {
           const snap = snapshot(p);
           if (synced[id] === snap) continue;
-          p.updated = Date.now();
-          await api('api/projects/' + id, 'PUT', { ...projectData(p), updated: p.updated });
+          const body = { ...projectData(p), updated: Date.now() };
+          if (id in bases || !synced[id]) body.base = bases[id] ?? null;
+          try {
+            await api('api/projects/' + id, 'PUT', body);
+          } catch (e) {
+            if (e.status !== 409) throw e;
+            await keepBoth(id);
+            pushAgain = true;
+            continue;
+          }
+          p.updated = bases[id] = body.updated;
           synced[id] = snap;
           saveSync();
         }
@@ -1901,6 +2239,7 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
           if (!projects[id]) {
             await api('api/projects/' + id, 'DELETE');
             delete synced[id];
+            delete bases[id];
             saveSync();
           }
       } while (pushAgain);
@@ -1914,7 +2253,36 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
     }
   }
 
-  // Bring down projects that are newer in the account. Local edits that haven't been uploaded yet always win.
+  // The same project was changed here and on another device. Keep the account's version under the project's
+  // name, and this device's edits as a separate copy, so nothing is lost and nothing is silently overwritten.
+  async function keepBoth(id) {
+    const mine = projects[id];
+    const theirs = await api('api/projects/' + id).catch(e => (e.status === 404 ? null : Promise.reject(e)));
+    if (!theirs) {
+      // Deleted on the other device: this device's edits simply become a new project.
+      delete bases[id];
+      delete synced[id];
+      return;
+    }
+    const copyId = uid();
+    const copyName = `${mine.name} (this device)`.slice(0, 60);
+    projects[copyId] = { name: copyName, files: mine.files, updated: Date.now() };
+    projects[id] = {
+      name: theirs.name,
+      files: theirs.files,
+      publish: theirs.publish || undefined,
+      updated: theirs.updated,
+    };
+    synced[id] = snapshot(projects[id]);
+    bases[id] = theirs.updated;
+    saveSync();
+    LS.set('cb.projects', projects);
+    if (currentId === id) switchProject(copyId);
+    else renderProjects();
+    toast(`"${theirs.name}" was also changed on another device. Your changes here are kept as "${copyName}".`, 9000);
+  }
+
+  // Bring down projects that changed in the account. Edits made here and there at the same time are kept as two.
   async function pullChanges() {
     if (!account) return;
     let remote;
@@ -1929,7 +2297,13 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
     for (const r of remote) {
       const local = projects[r.id];
       const unsent = local && synced[r.id] !== snapshot(local);
-      if (local && (unsent || (local.updated || 0) >= r.updated)) continue;
+      // Projects synced before version numbers were tracked count as up to date.
+      const seen = r.id in bases ? bases[r.id] : synced[r.id] ? r.updated : undefined;
+      if (local && seen === r.updated) continue;
+      if (unsent) {
+        await keepBoth(r.id).catch(() => {});
+        continue;
+      }
       const full = await api('api/projects/' + r.id).catch(() => null);
       if (!full) continue;
       projects[r.id] = {
@@ -1939,6 +2313,7 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
         updated: full.updated,
       };
       synced[r.id] = snapshot(projects[r.id]);
+      bases[r.id] = full.updated;
       if (r.id === currentId) changedCurrent = true;
     }
     // Deleted on another device.
@@ -1946,6 +2321,7 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
       if (!remoteIds.has(id) && projects[id] && synced[id] === snapshot(projects[id])) {
         delete projects[id];
         delete synced[id];
+        delete bases[id];
         if (id === currentId) changedCurrent = true;
       }
     // An untouched starter project would just pile up copies in the account, so drop it.
@@ -1965,7 +2341,10 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
   }
 
   function signedIn(a) {
-    if (LS.get('cb.sync', null)?.account !== a.id) synced = {};
+    if (LS.get('cb.sync', null)?.account !== a.id) {
+      synced = {};
+      bases = {};
+    }
     account = a;
     saveSync();
     renderAccountBtn();
@@ -1977,6 +2356,7 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
     for (const id of Object.keys(synced))
       if (projects[id] && synced[id] === snapshot(projects[id])) delete projects[id];
     synced = {};
+    bases = {};
     account = null;
     if (!Object.keys(projects).length) projects[uid()] = starter('My first site');
     LS.set('cb.projects', projects);
@@ -2009,9 +2389,37 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
     $('#authPassword').placeholder = up ? 'At least 8 characters' : '';
     $('#authError').textContent = '';
   }
+  const showAccountView = v => {
+    $('#authView').hidden = v !== 'auth';
+    $('#meView').hidden = v !== 'me';
+    $('#pwView').hidden = v !== 'pw';
+  };
+  const ago = t => {
+    const s = (Date.now() - t) / 1000;
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.round(s / 60)} min ago`;
+    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+    return new Date(t).toLocaleDateString();
+  };
+  async function renderMySites() {
+    const box = $('#mySites');
+    box.innerHTML = '<div class="dim mempty">Loading…</div>';
+    try {
+      const { sites } = await api('api/sites');
+      box.innerHTML = sites.length
+        ? sites
+            .map(
+              s =>
+                `<div class="mrow"><div><a href="${esc(new URL(`s/${s.slug}/`, location.href).href)}" target="_blank" rel="noopener"><b>${esc(s.slug)}</b></a><div class="dim">Updated ${esc(ago(s.updated))}</div></div><button type="button" data-takedown="${esc(s.slug)}">Take down</button></div>`,
+            )
+            .join('')
+        : '<div class="dim mempty">Sites you publish while signed in appear here.</div>';
+    } catch (e) {
+      box.innerHTML = `<div class="bad mempty">${esc(e.message)}</div>`;
+    }
+  }
   function renderAccountDlg() {
-    $('#authView').hidden = !!account;
-    $('#meView').hidden = !account;
+    if ($('#pwView').hidden || !account) showAccountView(account ? 'me' : 'auth');
     if (account) {
       $('#meAvatar').textContent = initials(account);
       $('#meName').textContent = account.name || account.email.split('@')[0];
@@ -2024,10 +2432,75 @@ To delete a file write <delete path="relative/path.ext"/>. Leave out files that 
     if (!serverCfg.accounts) return;
     setAuthMode('signin');
     if (reason) $('#authIntro').textContent = reason;
+    showAccountView(account ? 'me' : 'auth');
     renderAccountDlg();
     $('#accountDlg').showModal();
     if (!account) $('#authEmail').focus();
+    else renderMySites();
   }
+  $('#mySites').onclick = async e => {
+    const slug = e.target.dataset.takedown;
+    if (!slug) return;
+    const sure = await ask({
+      title: `Take down ${slug}?`,
+      text: 'The site stops working for everyone and the name becomes free for others to use. Your project is not affected.',
+      ok: 'Take down',
+      danger: true,
+    });
+    if (!sure) return;
+    try {
+      await api('api/sites/' + slug, 'DELETE');
+      for (const p of Object.values(projects)) if (p.publish?.slug === slug) delete p.publish;
+      save();
+      toast(`${slug} is no longer online.`);
+    } catch (err) {
+      toast(err.message);
+    }
+    renderMySites();
+  };
+  $('#changePw').onclick = () => {
+    $('#pwCurrent').value = $('#pwNew').value = '';
+    $('#pwError').textContent = '';
+    showAccountView('pw');
+    $('#pwCurrent').focus();
+  };
+  $('#pwCancel').onclick = () => showAccountView('me');
+  $('#pwView').onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await api('api/account/password', 'POST', { current: $('#pwCurrent').value, password: $('#pwNew').value });
+      showAccountView('me');
+      toast('Password changed. Other devices have been signed out.');
+    } catch (err) {
+      $('#pwError').textContent = err.message;
+    }
+  };
+  $('#deleteAccount').onclick = async () => {
+    const password = await ask({
+      title: 'Delete your account?',
+      text: 'This permanently deletes your account, the projects saved in it and the sites you published. Projects stay in this browser until you delete them. Enter your password to confirm.',
+      value: '',
+      type: 'password',
+      ok: 'Delete account',
+      danger: true,
+    });
+    if (!password) return;
+    try {
+      await api('api/account/delete', 'POST', { password });
+    } catch (err) {
+      return toast(err.message, 6000);
+    }
+    // Keep the projects in this browser as plain local projects.
+    synced = {};
+    bases = {};
+    for (const p of Object.values(projects)) delete p.publish;
+    account = null;
+    saveSync();
+    save();
+    renderAccountBtn();
+    $('#accountDlg').close();
+    toast('Your account has been deleted.');
+  };
   $('#accountBtn').onclick = () => openAccountDlg();
   $('#authSwitch').onclick = () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
   $('#authCancel').onclick = () => $('#accountDlg').close();
